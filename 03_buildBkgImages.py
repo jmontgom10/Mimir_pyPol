@@ -15,7 +15,6 @@ import numpy as np
 from astropy.io import ascii
 from astropy.table import Table as Table
 from astropy.table import Column as Column
-from astropy.convolution import Gaussian2DKernel
 from astropy.stats import gaussian_fwhm_to_sigma, sigma_clipped_stats
 from photutils import detect_sources, Background
 from scipy.ndimage.filters import median_filter, gaussian_filter

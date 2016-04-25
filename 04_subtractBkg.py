@@ -8,7 +8,6 @@ from astropy.table import Table, Column, vstack
 from astropy.wcs import WCS
 from astropy.wcs.utils import proj_plane_pixel_scales
 from astropy.coordinates import SkyCoord, ICRS
-from astropy.convolution import Gaussian2DKernel
 from astropy.stats import gaussian_fwhm_to_sigma, sigma_clipped_stats
 from scipy.stats import norm, f
 from scipy.odr import *

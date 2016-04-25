@@ -307,7 +307,7 @@ for key, group in zip(fileIndexByName.groups.keys, fileIndexByName.groups):
     # 2) The HWP_ANGLE (the rotation of the HWP)
     # Using this information, we can parse which files are A vs. B
 
-    # For later reference, let's group the group name
+    # For later reference, let's grab the group name
     thisName = np.unique(group['Name'].data)
 
     # Grab the file numbers for this group

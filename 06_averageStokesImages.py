@@ -7,7 +7,6 @@ from astropy.io import ascii
 from astropy.table import Table as Table
 from astropy.table import Column as Column
 from astropy.wcs import WCS
-from astropy.convolution import Gaussian2DKernel
 from astropy.stats import gaussian_fwhm_to_sigma, sigma_clipped_stats
 from scipy.stats import norm, f
 from scipy.ndimage.filters import median_filter, gaussian_filter
@@ -349,7 +348,7 @@ for group in fileIndexByTarget.groups:
 
         # Now that the background free images are stored, combine them
         # Align the images
-        print('\tAligning the background removed images')
+        print('\tAligning the background removed images for IPPA {0}'.format(ippa))
         imgList = image_tools.align_images(imgList, mode='wcs', padding=np.nan)
 
         # Perform identical alignments for the xPos and yPos images
@@ -367,7 +366,7 @@ for group in fileIndexByTarget.groups:
             # Find the positions of the bad values
             badInds     = np.where(np.logical_or(tmpXarr < 0, tmpYarr < 0))
             if len(badInds[0]) > 0:
-                # Replace these bad values with nans (to be filtered later)
+                # Mask these bad values (to be filtered later)
                 tmpXarr.mask[badInds] = True
                 tmpYarr.mask[badInds] = True
 
@@ -376,7 +375,7 @@ for group in fileIndexByTarget.groups:
                 yPosList[imgNum].arr = tmpYarr
 
         # Combine the images
-        print('\tCombining the aligned images')
+        print('\tCombining the aligned images for IPPA {0}'.format(ippa))
         IPPAimg = image_tools.combine_images(imgList, weighted_mean = True)
 
         # Now that the astrometry has been resolved, let's store this image
