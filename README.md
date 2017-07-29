@@ -71,8 +71,10 @@ After the HWP images have been aligned (across both H- and Ks-band), the average
 
 The Stokes I image can be calibrated to the Johnson-Cousins photometric system by matching aperture photometry from the images to the entries from the 2MASS catalog. The linear regression of the following three equation is performed.
 
-|m_2MASS_H - m_Mimir_H = zp_H + c*(m_Mimir_H - m_Mimir_K)|
-|m_2MASS_K - m_Mimir_K = zp_H + c*(m_Mimir_H - m_Mimir_K)|
-|m_2MASS_H - m_2MASS_K = c0   + c*(m_Mimir_H - m_Mimir_K)|
+    m_2MASS_H - m_Mimir_H = zp_H + c*(m_Mimir_H - m_Mimir_K)
+
+    m_2MASS_K - m_Mimir_K = zp_H + c*(m_Mimir_H - m_Mimir_K)
+
+    m_2MASS_H - m_2MASS_K = c0   + c*(m_Mimir_H - m_Mimir_K)
 
 The results of those regressions are used to construct calibrated Mimir H- and K-band images and a calibrated H-K color map.
