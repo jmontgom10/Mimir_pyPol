@@ -19,8 +19,22 @@ from scipy import stats
 # Add the AstroImage class
 import astroimage as ai
 
-# Set the directory for the pyPol reduced data
-pyPol_data = 'C:\\Users\\Jordan\\FITS_data\\PRISM_data\\pyPol_data\\201612\\'
+# Add the header handler to the BaseImage class
+from Mimir_header_handler import Mimir_header_handler
+ai.reduced.ReducedScience.set_header_handler(Mimir_header_handler)
+ai.set_instrument('mimir')
+
+#==============================================================================
+# *********************** CUSTOM USER CODE ************************************
+# this is where the user specifies where the raw data is stored
+# and some of the subdirectory structure to find the actual .FITS images
+#==============================================================================
+# Define the location of the PPOL reduced data to be read and worked on
+PPOL_data = 'C:\\Users\\Jordan\\FITS_data\\Mimir_data\\PPOL_Reduced\\201611\\'
+S3_dir    = os.path.join(PPOL_data, 'S3_Astrometry')
+
+# This is the location where all pyPol data will be saved
+pyPol_data='C:\\Users\\Jordan\\FITS_data\\Mimir_data\\pyPol_Reduced\\201611'
 
 # Set the filename for the reduced data indexFile and read it in
 reducedFileIndexFile = os.path.join(pyPol_data, 'reducedFileIndex.csv')
@@ -31,34 +45,26 @@ reducedFileIndex     = Table.read(reducedFileIndexFile)
 # user invokes 01_buildIndex.py again, it will not OVERWRITE the PSF data.
 PSFindexFile = os.path.join(pyPol_data, 'PSFindex.csv')
 
-#==============================================================================
-# *********************** CUSTOM USER CODE ************************************
-# this is where the user specifies where the raw data is stored
-# and some of the subdirectory structure to find the actual .FITS images
-#==============================================================================
-# This is the location of all pyBDP data (index, calibration images, reduced...)
-pyBDP_data='C:\\Users\\Jordan\\FITS_data\\PRISM_data\\pyBDP_data\\201612'
-
-# This is the location where all pyPol data will be saved
-pyPol_data='C:\\Users\\Jordan\\FITS_data\\PRISM_data\\pyPol_data\\201612'
-
-# This is the location of the pyBDP processed Data
-pyBDP_reducedDir = os.path.join(pyBDP_data, 'pyBDP_reduced_images')
-
 # Finally, loop through EACH image and compute the PSF
 PSFwidths = []
 sigm2FWHM = 2*np.sqrt(2*np.log(2))
 numberOfFiles = len(reducedFileIndex)
 for iFile, filename in enumerate(reducedFileIndex['FILENAME'].data):
-    if reducedFileIndex['AB'][i] == 'B':
+    if reducedFileIndex['AB'][iFile] == 'B':
         PSFwidths = [-1]
         continue
 
+    # Construct the PPOL file name
+    PPOL_file = os.path.join(S3_dir, filename)
+
     # Read in the image
-    thisImg = ai.ReducedScience.read(filename)
+    thisImg = ai.reduced.ReducedScience.read(PPOL_file)
+
+    # Construct a Photometry analyzer object
+    thisPhotAnalyzer = ai.utilitywrappers.PhotometryAnalyzer(thisImg)
 
     # Estimate the PSF for this image
-    PSFstamp, PSFparams = thisImg.get_psf()
+    PSFstamp, PSFparams = thisPhotAnalyzer.get_psf()
 
     # Check if non-null values were returned from the get_psf method
     if (PSFparams['sminor'] is None) or (PSFparams['smajor'] is None):

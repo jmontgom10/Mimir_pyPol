@@ -18,7 +18,6 @@ Saves the index file with a USE and GROUP_ID columns added to the table.
 import os
 import sys
 import time
-import re
 import numpy as np
 import matplotlib.pyplot as plt
 from astropy.io import fits
@@ -35,12 +34,9 @@ import astroimage as ai
 # this is where the user specifies where the raw data is stored
 # and some of the subdirectory structure to find the actual .FITS images
 #==============================================================================
-
-# This is the location of all pyBDP data (index, calibration images, reduced...)
-BDP_data='C:\\Users\\Jordan\\FITS_data\\Mimir_data\\BDP_Data\\201611'
-
 # Set the directory for the PPOL reduced data
 PPOL_data = 'C:\\Users\\Jordan\\FITS_data\\Mimir_data\\PPOL_Reduced\\201611\\'
+S3_dir    = os.path.join(PPOL_data, 'S3_Astrometry')
 
 # This is the location where all pyPol data will be saved
 pyPol_data='C:\\Users\\Jordan\\FITS_data\\Mimir_data\\pyPol_Reduced\\201611\\'
@@ -112,7 +108,6 @@ targetList = [t.upper() for t in targetList]
 
 # Generate a list of files in the 'polarimetry' directories
 # fileList = np.array(recursive_file_search(BDP_data, exten='.fits'))
-S3_dir   = os.path.join(PPOL_data, 'S3_Astrometry')
 fileList = np.array(os.listdir(S3_dir))
 
 #Sort the fileList
