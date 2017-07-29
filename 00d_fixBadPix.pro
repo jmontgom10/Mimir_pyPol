@@ -12,8 +12,8 @@
 ; for this PPOL project.
 
 ; Setup the directories
-PPOL_dir = 'C:\Users\Jordan\FITS_data\Mimir_data\PPOL_reduced' 
-BDP_dir  = 'C:\Users\Jordan\FITS_data\Mimir_data\BDP_data'
+PPOL_dir = 'C:\Users\Jordan\FITS_data\Mimir_data\PPOL_Reduced\201611'
+BDP_dir  = 'C:\Users\Jordan\FITS_data\Mimir_data\BDP_Data\201611'
 S2_dir   = PPOL_dir + PATH_SEP() + 'S2_Ski_Jump_Fixes'
 S3_dir   = PPOL_dir + PATH_SEP() + 'S3_Astrometry'
 
@@ -26,22 +26,22 @@ FOR i = 0, numFiles - 1 DO BEGIN
   ; Grab the file name properties
   thisFile     = S3_files[i]
   thisBasename = FILE_BASENAME(thisFile)
-  
+
   ; Read in the header from the S3 file
   header = HEADFITS(thisFile)
-  
+
   ; Construct the BDP file and read in the BDP file array
   yyyymmdd = STRMID(thisBasename, 0, 8)
-  BDPfile  = BDP_dir + PATH_SEP() + yyyymmdd + PATH_SEP() + thisBasename
+  BDPfile  = BDP_dir + PATH_SEP() + yyyymmdd + PATH_SEP() + 'polarimetry' + PATH_SEP() + thisBasename
   arr      = READFITS(BDPfile)
-  
+
   ; Compute image statistics
   SKY, arr, skyMode, skySig, /SILENT
-  
+
   ; Identify anomalous pixels
   medImg = MEDIAN(arr, 5)
   badPix = ABS(arr - medImg)/skySig GT 4.0
-  
+
   ; Count up number of neighboring bad pixels
   numNeighbors = FIX(0*arr)
   FOR dx = -1, 1 DO BEGIN
@@ -49,11 +49,11 @@ FOR i = 0, numFiles - 1 DO BEGIN
       numNeighbors += SHIFT(badPix, dx, dy)
     ENDFOR
   ENDFOR
-  
+
   badPix = badPix AND (numNeighbors LT 5) OR (arr LT -1E4)
   badInd = WHERE(badPix, numBad)
   IF numBad GT 0 THEN arr[badInd] = -1E6
-  
+
   ; Now that the array and header have been read in,
   ; process the array and save the results
   outArr = MODEL_BAD_PIXELS(arr)

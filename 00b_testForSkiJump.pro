@@ -7,7 +7,7 @@
 ; THIS IS WHERE THE USER CAN DEFINE THE SPECIFICS OF THIS PPOL_PROJECT
 ;******************************************************************************
 ; Define the PPOL directory
-PPOL_dir   = 'C:\Users\Jordan\FITS_data\Mimir_data\PPOL_reduced'
+PPOL_dir  = 'C:\Users\Jordan\FITS_data\Mimir_data\PPOL_Reduced\201611'
 backup_dir = PPOL_dir + PATH_SEP() + 'S3_Backups'
 IF ~FILE_TEST(backup_dir, /DIRECTORY) THEN FILE_MKDIR, backup_dir
 
@@ -39,13 +39,13 @@ FOR iGroup = 0, ((*G_PTR).N_GROUPS - 1) DO BEGIN
     ; Grab the filename
     thisFile    = (*G_PTR).GROUP_IMAGES[iGroup, iFile]; Grab the BDP filename for this file
     
-;    ; If S2 has already been run, then you can use this code segment to skip over any files
-;    ; that were not idenified as "ski-jumps" in S2.
-;    fileBase    = FILE_BASENAME(thisFile)
-;    thisS2file  = PPOL_dir + PATH_SEP() + $           ; Grab the S3 filename for this file
-;      'S2_Ski_Jump_Fixes' + PATH_SEP() + fileBase
-;
-;    IF ~FILE_TEST(thisS2file) THEN CONTINUE
+    ; If S2 has already been run, then you can use this code segment to skip over any files
+    ; that were not idenified as "ski-jumps" in S2.
+    fileBase    = FILE_BASENAME(thisFile)
+    thisS2file  = PPOL_dir + PATH_SEP() + $           ; Grab the S3 filename for this file
+      'S2_Ski_Jump_Fixes' + PATH_SEP() + fileBase
+
+    IF ~FILE_TEST(thisS2file) THEN CONTINUE
 
     ; Construct the S3 file path
     thisS3file  = PPOL_dir + PATH_SEP() + $           ; Grab the S3 filename for this file

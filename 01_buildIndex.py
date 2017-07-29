@@ -1,495 +1,349 @@
 # -*- coding: utf-8 -*-
 """
-Created on Mon Nov 16 13:23:45 2015
+Restructures the rawFileIndex from PRISM_pyBDP to contain ONLY the science
+images, and break those up into individual groups based on changes in
 
-@author: jordan
+1) OBJECT (object name)
+2) FILTER (optical filter value)
+3) EXPTIME (the exposure time of the images)
+4) Pointing changes (more than 1.5 degrees of chang is considered a new group)
+
+Attempts to associate each group with a target in the 'targetList' variable on
+the basis of the string in the OBJECT column of that group.
+
+Saves the index file with a USE and GROUP_ID columns added to the table.
 """
 
 #Import whatever modules will be used
 import os
 import sys
 import time
-import pdb
+import re
 import numpy as np
 import matplotlib.pyplot as plt
-from astropy.table import Table, Column
-import astropy.coordinates as coord
-import astropy.units as u
 from astropy.io import fits
+from astropy.table import Table, Column
+from astropy.coordinates import SkyCoord
+import astropy.units as u
 from scipy import stats
 
 # Add the AstroImage class
-sys.path.append("C:\\Users\\Jordan\\Libraries\\python\\AstroImage")
-from AstroImage import AstroImage
-
-################################################################################
-# Define a recursive file search which takes a parent directory and returns all
-# the FILES (not DIRECTORIES) beneath that node.
-def recursive_file_search(parentDir, exten='', fileList=[]):
-    # Query the elements in the directory
-    subNodes = os.listdir(parentDir)
-
-    # Loop through the nodes...
-    for node in subNodes:
-        # If this node is a directory,
-        thisPath = os.path.join(parentDir, node)
-        if os.path.isdir(thisPath):
-            # then drop down recurse the function
-            recursive_file_search(thisPath, exten, fileList)
-        else:
-            # otherwise test the extension,
-            # and append the node to the fileList
-            if len(exten) > 0:
-                # If an extension was defined,
-                # then test if this file is the right extension
-                exten1 = (exten[::-1]).upper()
-                if (thisPath[::-1][0:len(exten1)]).upper() == exten1:
-                    fileList.append(thisPath)
-            else:
-                fileList.append(thisPath)
-
-    # Return the final list to the user
-    return fileList
-################################################################################
-
-#Setup the path delimeter for this operating system
-delim = os.path.sep
+import astroimage as ai
 
 #==============================================================================
 # *********************** CUSTOM USER CODE ************************************
 # this is where the user specifies where the raw data is stored
 # and some of the subdirectory structure to find the actual .FITS images
 #==============================================================================
-# This is the location of all PPOL reduction directory
-PPOL_dir = 'C:\\Users\\Jordan\\FITS_data\\Mimir_data\\PPOL_reduced'
 
-# Build the path to the S3_Asotremtry files
-S3dir = os.path.join(PPOL_dir, 'S3_Astrometry')
+# This is the location of all pyBDP data (index, calibration images, reduced...)
+BDP_data='C:\\Users\\Jordan\\FITS_data\\Mimir_data\\BDP_Data\\201611'
+
+# Set the directory for the PPOL reduced data
+PPOL_data = 'C:\\Users\\Jordan\\FITS_data\\Mimir_data\\PPOL_Reduced\\201611\\'
 
 # This is the location where all pyPol data will be saved
-pyPol_data = 'C:\\Users\\Jordan\\FITS_data\\Mimir_data\\pyPol_data'
+pyPol_data='C:\\Users\\Jordan\\FITS_data\\Mimir_data\\pyPol_Reduced\\201611\\'
+if (not os.path.isdir(pyPol_data)):
+    os.mkdir(pyPol_data, 0o755)
 
-# The Montgomery-Clemens reflection nebula project used the pattern
-# A (on-target), B (off-target), B (off-target), A (on-target)
-# To indicate a group with the opposite pattern
-# A (off-target), B (on-target), B (on-target), A (off-target)
-# simply include the name of the OBJECT header keyword
-ABBAswap = []
-
-# Construct a list of all the reduced BDP files (recursively suearching)
-fileList = recursive_file_search(S3dir, exten='.fits')
-
-#Sort the fileList
-fileNums = [''.join((file.split(delim).pop().split('.'))[0:2]) for file in fileList]
-fileNums = [file.split('_')[0] for file in fileNums]
-
-sortInds = np.argsort(np.array(fileNums, dtype = np.int64))
-fileList = [fileList[ind] for ind in sortInds]
-
-#==============================================================================
-# ***************************** INDEX *****************************************
-# Build an index of the file type and binning, and write it to disk
-#==============================================================================
-# Check if a file index already exists... if it does then just read it in
+# Set the filename for the reduced data indexFile
 indexFile = os.path.join(pyPol_data, 'reducedFileIndex.csv')
 
-# Record a list of HWP angles to be checked
-HWPlist  = np.array([34,    4556,  2261,  6784,  9011,  13534, 11306, 15761,
-                    18056, 22511, 20284, 24806, 27034, 31556, 29261, 33784])
-HWPlist.sort()
+# Compose a list of expected targets. All groups will be assigned to ONE of
+# these targets within a given tolerance. If no match is found for a group
+# within this list of targets, then an error will be raised.
+targetList = [
+    'M78',
+    'NGC7023',
+    'NGC2023',
+    'Orion_Cal',
+    'Cyg_OB2',
+    'Elias'
+]
 
-# Loop through each night and test for image type
-print('\nCategorizing files by groups.\n')
+# Create a dictionary with known group name problems. They keys should be the
+# name of the group as it is currently, and the value should be the name of the
+# group as it *ought* to be.
+problematicGroupNames = {'NGC723_H3': 'NGC7023_H3'}
+
+# Force all the targets to be upper case to remove ambiguity
+targetList = [t.upper() for t in targetList]
+
+# ################################################################################
+# # Define a recursive file search which takes a parent directory and returns all
+# # the FILES (not DIRECTORIES) beneath that node.
+# def recursive_file_search(parentDir, exten='', fileList=[]):
+#     # Query the elements in the directory
+#     subNodes = os.listdir(parentDir)
+#
+#     # Loop through the nodes...
+#     for node in subNodes:
+#         # If this node is a directory,
+#         thisPath = os.path.join(parentDir, node)
+#         if os.path.isdir(thisPath):
+#             # then drop down recurse the function
+#             recursive_file_search(thisPath, exten, fileList)
+#
+#         else:
+#             fileDirName = os.path.basename(
+#                 os.path.normpath(
+#                     os.path.dirname(thisPath)
+#                 )
+#             )
+#             # *** ONLY ACCEPT FILES IN THE 'polarimetry' DIRECTORIES ***
+#             if fileDirName ==  'polarimetry':
+#                 # otherwise test the extension,
+#                 # and append the node to the fileList
+#                 if len(exten) > 0:
+#                     # If an extension was defined,
+#                     # then test if this file is the right extension
+#                     exten1 = (exten[::-1]).upper()
+#                     if (thisPath[::-1][0:len(exten1)]).upper() == exten1:
+#                         fileList.append(thisPath)
+#                 else:
+#                     fileList.append(thisPath)
+#             else: pass
+#
+#     # Return the final list to the user
+#     return fileList
+
+
+
+# Generate a list of files in the 'polarimetry' directories
+# fileList = np.array(recursive_file_search(BDP_data, exten='.fits'))
+S3_dir   = os.path.join(PPOL_data, 'S3_Astrometry')
+fileList = np.array(os.listdir(S3_dir))
+
+#Sort the fileList
+fileNums = [''.join((os.path.basename(f).split('.'))[0:2]) for f in fileList]
+fileNums = np.array([f.split('_')[0] for f in fileNums], dtype=np.int64)
+sortInds = fileNums.argsort()
+fileList = fileList[sortInds]
+
+# Test for image type
+print('\nCategorizing files into TARGET, HWP, BAAB\n')
 startTime = time.time()
-
 # Begin by initalizing some arrays to store the image classifications
-telRA    = []
-telDec   = []
-name     = []
-waveBand = []
-HWPang   = []
-binType  = []
-expTime  = []
-night    = []
-fileCounter = 0
-percentage  = 0
+OBJECT   = []
+OBSTYPE  = []
+FILTER   = []
+TELRA    = []
+TELDEC   = []
+EXPTIME  = []
+HWP      = []
+AB       = []
+NIGHT    = []
+percentage = 0
 
 #Loop through each file in the fileList variable
-for file in fileList:
-    # Read in the image
-    tmpImg = AstroImage(file)
+numberOfFiles = len(fileList)
+for iFile, filename in enumerate(fileList):
+    # Read in the file
+    thisHDU    = fits.open(os.path.join(S3_dir, filename))
+    thisHeader = thisHDU[0].header
 
-    # Grab the RA and Dec from the header
-    # Parse the pointing for this file
-    tmpRA    = coord.Angle(tmpImg.header['TELRA'], unit=u.hour)
-    tmpDec   = coord.Angle(tmpImg.header['TELDEC'], unit=u.degree)
-    telRA.append(tmpRA.degree)
-    telDec.append(tmpDec.degree)
+    # Grab the OBJECT header value
+    tmpOBJECT = thisHeader['OBJECT']
+    if len(tmpOBJECT) < 1:
+        tmpOBJECT = 'blank'
+    OBJECT.append(tmpOBJECT)
 
-    # Classify each file type and binning
-    tmpName = tmpImg.header['OBJECT']
-    if len(tmpName) < 1:
-        tmpName = 'blank'
-    name.append(tmpName)
+    # Grab the OBSTYPE header value
+    OBSTYPE.append(thisHeader['OBSTYPE'])
 
-    # Parse the HWP number
-    tmpHWP  = round(100*tmpImg.header['HWP_ANG'])
-    HWPdiff = np.abs(HWPlist - tmpHWP)
-    tmpHWP  = (np.where(HWPdiff == np.min(HWPdiff)))[0][0] + 1
-    HWPang.append(tmpHWP)
+    # Grab the FILTNME3 header value
+    FILTER.append(thisHeader['FILTNME2'])
 
-    # Parse the waveband
-    waveBand.append(tmpImg.header['FILTNME2'])
+    # Grab the TELRA header value
+    try:
+        TELRA.append(thisHeader['TELRA'])
+    except:
+        TELRA.append(0)
 
-    # Test the binning of this file
-    binTest  = tmpImg.header['CRDELT*']
-    if binTest[0] == binTest[1]:
-        binType.append(int(binTest[0]))
+    try:
+        TELDEC.append(thisHeader['TELDEC'])
+    except:
+        TELDEC.append(0)
 
-    # Grab the night of this observation
-    tmpNight = (tmpImg.header['DATE-OBS'])[0:10]
-    tmpNight = tmpNight.translate({ord(i):None for i in '-'})
-    night.append(tmpNight)
+    # Grab the HWP header value
+    HWP.append(thisHeader['HWP'])
 
-    # Grab the exposure time of this observation
-    tmpExpTime = tmpImg.header['EXPTIME']
-    expTime.append(tmpExpTime)
+    # Search for the A-pos B-pos value
+    if 'COMMENT' in thisHeader:
+        # This is SUPER lazy, but it gets the job done
+        for thisComment in thisHeader['COMMENT']:
+            if 'HWP' in thisComment and 'posn' in thisComment:
+                thisAB = thisComment[-6]
+            else:
+                thisAB = 'A'
+    else:
+        thisAB = 'A'
+
+    # Append the AB value to the list
+    if thisAB == 'A' or thisAB == 'B':
+        AB.append(thisAB)
+    else:
+        # Oops... something went wrong. You should only have As or Bs
+        import pdb; pdb.set_trace()
+
+    # Grab the EXPTIME value from the header
+    EXPTIME.append(thisHeader['EXPTIME'])
+
+    # Assign a NIGHT value for this image
+    NIGHT.append(''.join((os.path.basename(filename).split('.'))[0]))
 
     # Count the files completed and print update progress message
-    fileCounter += 1
-    percentage1  = np.floor(fileCounter/len(fileList)*100)
+    percentage1  = np.floor(100*iFile/numberOfFiles)
     if percentage1 != percentage:
-        print('completed {0:3g}%'.format(percentage1), end='\r')
+        print('completed {0:3g}%'.format(percentage1), end="\r")
     percentage = percentage1
 
-endTime  = time.time()
-numFiles = len(fileList)
-print(('\n{0} File processing completed in {1:g} seconds'.
-       format(numFiles, (endTime -startTime))))
+print('completed {0:3g}%'.format(100), end="\r")
+endTime = time.time()
+print('\nFile processing completed in {0:g} seconds'.format(endTime - startTime))
 
+# Query the user about the targets of each group...
 # Write the file index to disk
-fileIndex = Table([fileList, telRA, telDec, name, waveBand, HWPang, binType,
-   expTime, night], names = ['Filename', 'RA', 'Dec', 'Name', 'Waveband',
-   'HWP', 'Binning', 'Exp Time', 'Night'])
-fileIndex.add_column(Column(name='Use',
-                            data=np.ones((numFiles)),
-                            dtype=np.int),
-                            index=0)
+reducedFileIndex = Table([ fileList,   NIGHT,   OBSTYPE,   OBJECT,   FILTER,
+                    TELRA,   TELDEC,   EXPTIME,   HWP,   AB],
+          names = ['FILENAME', 'NIGHT', 'OBSTYPE', 'OBJECT', 'FILTER',
+                   'TELRA', 'TELDEC', 'EXPTIME', 'HWP', 'AB'])
 
-# Group by "Name"
-groupFileIndex = fileIndex.group_by('Name')
+# Remap the filenames to be the reduced filenames
+fileBasenames    = [os.path.basename(f) for f in reducedFileIndex['FILENAME']]
+# reducedFilenames = [os.path.join(pyBDP_reducedDir, f) for f in fileBasenames]
+# reducedFileIndex['FILENAME'] = reducedFilenames
 
-# Grab the file-number orderd indices for the groupFileIndex
-fileIndices = np.argsort(groupFileIndex['Filename'])
+# Find the breaks in observation procedure. These are candidates for group
+# boundaries.
+# 1) OBJECT changes
+objectChange = (reducedFileIndex['OBJECT'][1:] != reducedFileIndex['OBJECT'][0:-1])
 
-# Loop through each "Name" and assign it a "Target" value
-targetList   = []
-ditherList   = []
-PPOLnameList = []
-for group in groupFileIndex.groups:
-    # Select this groups properties
-    thisName     = np.unique(group['Name'].data)
-    thisWaveband = np.unique(group['Waveband'].data)
-    thisExpTime  = np.unique(group['Exp Time'].data)
+# 2) OBSTYPE changes
+obstypeChange = (reducedFileIndex['OBSTYPE'][1:] != reducedFileIndex['OBSTYPE'][0:-1])
 
-    # Test if the group name truely is unique
-    if len(thisName) == 1:
-        thisName = str(thisName[0])
+# 3) FILTER changes
+filterChange = (reducedFileIndex['FILTER'][1:] != reducedFileIndex['FILTER'][0:-1])
+
+# 4) EXPTIME changes
+expTimeChange = (reducedFileIndex['EXPTIME'][1:] != reducedFileIndex['EXPTIME'][0:-1])
+
+# 5) Pointing changes
+# Look for any pointing differences 1.5 degree (or more) for further separations
+allPointings   = SkyCoord(
+    reducedFileIndex['TELRA'],
+    reducedFileIndex['TELDEC'],
+    unit=(u.hour, u.degree)
+)
+medianDecs     = 0.5*(allPointings[1:].ra.to(u.rad) + allPointings[0:-1].ra.to(u.rad))
+deltaDec       = allPointings[1:].dec - allPointings[0:-1].dec
+deltaRA        = (allPointings[1:].ra - allPointings[0:-1].ra)*np.cos(medianDecs)
+deltaPointing  = np.sqrt(deltaRA**2 + deltaDec**2)
+pointingChange = deltaPointing > (1.5*u.deg)
+
+# Identify all changes
+allChanges = objectChange
+allChanges = np.logical_or(allChanges, obstypeChange)
+allChanges = np.logical_or(allChanges, filterChange)
+allChanges = np.logical_or(allChanges, expTimeChange)
+allChanges = np.logical_or(allChanges, pointingChange)
+
+# Assign a GROUP_ID for each group
+groupBoundaries = np.hstack([0, np.where(allChanges)[0] + 1, allChanges.size])
+groupIDs        = []
+for i in range(groupBoundaries.size - 1):
+    # Find the start and end indices of the group
+    groupStartInd = groupBoundaries[i]
+    groupEndInd   = groupBoundaries[i+1]
+
+    # Build the gorup ID number
+    groupID = i + 1
+
+    # Count the number of images in this group
+    numberOfImages = groupEndInd - groupStartInd
+
+    # Build the list of ID numbers for THIS group and append it to the full list
+    thisGroupID = numberOfImages*[groupID]
+    groupIDs.extend(thisGroupID)
+
+# Fill in the final entry
+groupIDs.append(groupID)
+
+# Store the groupID number in the reducedFileIndex
+groupIDcolumn = Column(name='GROUP_ID', data=groupIDs)
+reducedFileIndex.add_column(groupIDcolumn, index=2)
+
+# Now remove any GROUPS with less than 8 images
+groupIndex = reducedFileIndex.group_by('GROUP_ID')
+goodGroupInds = []
+groupInds = groupIndex.groups.indices
+for startInd, endInd in zip(groupInds[:-1], groupInds[+1:]):
+    # Count the number of images in this group and test if it's any good.
+    if (endInd - startInd) >= 8:
+        goodGroupInds.extend(range(startInd, endInd))
+
+
+# Cull the reducedFileIndex to only include viable groups
+goodGroupInds    = np.array(goodGroupInds)
+reducedFileIndex = reducedFileIndex[goodGroupInds]
+
+# Match a dither type for each group ("ABBA" or "HEX")
+groupIndex = reducedFileIndex.group_by('GROUP_ID')
+ditherType = []
+for group in groupIndex.groups:
+    # Count the number of images in this group
+    numberOfImages = len(group)
+
+    # Test if this is an ABBA or HEX dither
+    if ('A' in group['AB']) and ('B' in group['AB']):
+        ditherType.extend(numberOfImages*['ABBA'])
+    if ('A' in group['AB']) and not ('B' in group['AB']):
+        ditherType.extend(numberOfImages*['HEX'])
+
+# Store the ditherNames number in the reducedFileIndex
+ditherTypeColumn = Column(name='DITHER_TYPE', data=ditherType)
+groupIndex.add_column(ditherTypeColumn, index=10)
+
+# Identify meta-groups pointing at a single target with a single dither style.
+targets = []
+for group in groupIndex.groups:
+    # Count the number of images in this group
+    numberOfImages = len(group)
+
+    # Get the group name
+    groupName = np.unique(group['OBJECT'])[0]
+
+    # Capitalize the group name to remove ambiguity
+    groupName = groupName.upper()
+
+    # Rename the group if it needs to be renamed
+    if groupName in problematicGroupNames:
+        groupName = problematicGroupNames[groupName]
+
+    # Test it a target name occurs in this group name
+    for target in targetList:
+        if target in groupName:
+            targets.extend(numberOfImages*[target])
+
+            break
     else:
-        print('There is more than one name in this group!')
-        pdb.set_trace()
+        import pdb; pdb.set_trace()
+        raise ValueError('Gorup {} found no match in the target list'.format(groupName))
 
-    # Test if the waveband is truely uniqe name truely is unique
-    if len(thisWaveband) == 1:
-        thisWaveband = str(thisWaveband[0])
-    else:
-        print('There is more than one waveband in this group!')
-        pdb.set_trace()
+# Add the target identifications to the groupIndex table
+targetColumn = Column(name='TARGET', data=targets)
+groupIndex.add_column(targetColumn, index=5)
 
-    # Test if the exposure time is truely uniqe name truely is unique
-    if len(thisExpTime) == 1:
-        thisExpTime = str(thisExpTime[0])
-    else:
-        print('There is more than one exposure time in this group!')
-        pdb.set_trace()
+# Re-order by filename. Start by getting the sorting array
+sortInds = groupIndex['FILENAME'].data.argsort()
+reducedFileIndex = groupIndex[sortInds]
 
-    # Grab the file numbers for this group
-    thisGroupFileNums = []
-    for thisFile in group['Filename']:
-        # Parse the file number for this file
-        thisFileNum = os.path.basename(thisFile)
-        thisFileNum = thisFileNum.split('_')[0]
-        thisFileNum = int(''.join(thisFileNum.split('.')))
-        thisGroupFileNums.append(thisFileNum)
+# Finally, add a column of "use" flags at the first index
+useColumn = Column(name='USE', data=np.ones((len(reducedFileIndex),), dtype=int))
+reducedFileIndex.add_column(useColumn, index=0)
 
-    # Sort the file numbers from greatest to least
-    thisGroupFileNums = sorted(thisGroupFileNums)
+# Save the index to disk.
+reducedFileIndex.write(indexFile, format='ascii.csv', overwrite=True)
 
-    # Grab the first and last image numbers
-    firstImg = str(min(thisGroupFileNums))
-    firstImg = firstImg[0:8] + '.' + firstImg[8:]
-    lastImg  = str(max(thisGroupFileNums))
-    lastImg  = lastImg[0:8] + '.' + lastImg[8:]
-
-    # Count the number of elements in this group
-    groupLen = len(group)
-
-    # Print diagnostic information
-    print('\nProcessing {0} images for'.format(groupLen))
-    print('\tGroup      : {0}'.format(thisName))
-    print('\tWaveband   : {0}'.format(thisWaveband))
-    print('\tExptime    : {0}'.format(thisExpTime))
-    print('\tFirst Img  : {0}'.format(firstImg))
-    print('\tLast Img   : {0}'.format(lastImg))
-    print('')
-
-    # Add the "PPOLname"
-    # thisPPOLname = input('\nEnter the PPOL name for group "{0}": '.format(thisName))
-    #
-    # Add the "Target" column to the fileIndex
-    # thisTarget = input('\nEnter the target for group "{0}": '.format(thisName))
-    #
-    # Ask the user to supply the dither pattern for this group
-    # thisDitherEntered = False
-    # while not thisDitherEntered:
-    #     # Have the user select option 1 or 2
-    #     print('\nEnter the dither patttern for group "{0}": '.format(thisName))
-    #     thisDither = input('[1: ABBA, 2: HEX]: ')
-    #
-    #     # Test if the numbers 1 or 2 were entered
-    #     try:
-    #         thisDither = np.int(thisDither)
-    #         if (thisDither == 1) or (thisDither == 2):
-    #             # If so, then reassign as a string
-    #             thisDither = ['ABBA', 'HEX'][(thisDither-1)]
-    #             thisDitherEntered = True
-    #     except:
-    #         print('Response not recognized')
-
-
-    # Use the following code to skip over manual entry (comment out lines above)
-    thisPPOLname = thisName
-    thisTarget   = (thisName.split('_'))[0]
-    thisDither   = "ABBA"
-
-    # Add these elements to the target list
-    PPOLnameList.extend([thisPPOLname]*groupLen)
-    targetList.extend([thisTarget]*groupLen)
-    ditherList.extend([thisDither]*groupLen)
-
-# Add the "PPOL name" "Target" and "Dither columns"
-groupFileIndex.add_column(Column(name='Target',
-                            data = np.array(targetList)),
-                            index = 2)
-groupFileIndex.add_column(Column(name='PPOL Name',
-                            data = np.array(PPOLnameList)),
-                            index = 3)
-groupFileIndex.add_column(Column(name='Dither',
-                            data = np.array(ditherList)),
-                            index = 7)
-
-# Re-sort by file-number
-fileSortInds = np.argsort(groupFileIndex['Filename'])
-fileIndex1   = groupFileIndex[fileSortInds]
-
-#==============================================================================
-# ************************** ABBA PARSER **************************************
-# Loop through all the groups in the index and parse the ABBA dithers
-#==============================================================================
-ABBAlist = np.repeat('X', len(fileIndex1))
-
-fileIndexByName = fileIndex1.group_by(['PPOL Name'])
-ABBAlist = []
-for key, group in zip(fileIndexByName.groups.keys, fileIndexByName.groups):
-    print('\nParsing ABBA values for PPOL group ', key['PPOL Name'])
-    # For each of each group file, we will need two pieces of information
-    # 1) The FILENUMBER (essentially the date plus the nightly file number)
-    # 2) The HWP_ANGLE (the rotation of the HWP)
-    # Using this information, we can parse which files are A vs. B
-
-    # For later reference, let's grab the group name
-    thisName = np.unique(group['Name'].data)
-
-    # Grab the file numbers for this group
-    thisGroupFileNums = [''.join((file.split(delim).pop().split('.'))[0:2])
-        for file in group['Filename'].data]
-    thisGroupFileNums = [int(file.split('_')[0]) for file in thisGroupFileNums]
-    thisGroupFileNums = np.array(thisGroupFileNums)
-
-    # Grab the HWP, RA, and Decs for this group
-    thisGroupHWPs     = group['HWP'].data
-    thisGroupRAs      = group['RA'].data
-    thisGroupDecs     = group['Dec'].data
-
-    # Compute the incremental step for each image in the sequence
-    numIncr = thisGroupFileNums - np.roll(thisGroupFileNums, 1)
-    numIncr[0] = 1
-
-    # Check if the mean increment is about 2, and skip if it is...
-    meanIncr = (10.0*np.mean(numIncr))/10.0
-    skipGroup = False
-    if (meanIncr >= 1.85) and (meanIncr <= 2.15):
-        print(key['Name'] + 'appears to already have been parsed')
-        skipGroup = True
-
-    if skipGroup: continue
-
-    # Find where the HWP changes
-    # This is not quite the right algorithm anymore...
-    HWPshifts = (thisGroupHWPs != np.roll(thisGroupHWPs, 1))
-    HWPshifts[0] = False
-
-    if np.sum(HWPshifts) < 0.5*len(group):
-        #****************************************************
-        # This group has  the 16(ABBA) dither type.
-        #****************************************************
-        print('Dither type 16(ABBA)')
-        # Find places where the HWP change corresponds to a numIncr of 1
-        ABBArestart = np.logical_and(HWPshifts, (numIncr == 1))
-
-        if np.sum(ABBArestart) > 0:
-            # Check for the index of these ABBA restart points
-            ABBArestartInd = np.where(ABBArestart)
-            # Find the index of the first restart
-            firstRestartInd = np.min(ABBArestartInd)
-            # Find the amount of shift needed to coincide ABBAinds with ABBArestart
-            numSkips  = round(np.sum(numIncr[0:firstRestartInd])) - firstRestartInd
-            ABBAshift = (64 - (firstRestartInd + numSkips)) % 4
-            ABBAinds  = (thisGroupFileNums - thisGroupFileNums[0] + ABBAshift) % 4
-        else:
-            print('The HWP shifts are not well mapped, so a solution is not possible.')
-            pdb.set_trace()
-
-        # Setup the dither pattern array
-        if thisName in ABBAswap:
-            # Setup the reverse ABBA array
-            print('Using reverse ABBA values for this group')
-            ABBAarr = np.array(['B','A','A','B'])
-        else:
-            # Setup the normal ABBA array
-            ABBAarr = np.array(['A','B','B','A'])
-
-        # Grab the ABBA values for each file
-        thisGroupABBAs = ABBAarr[ABBAinds]
-
-        # Parse the indices for A images and B images
-        Ainds = np.where(thisGroupABBAs == 'A')
-        Binds = np.where(thisGroupABBAs == 'B')
-
-    else:
-        #****************************************************
-        # This group has  the (16A, 16B, 16B, 16A) dither type.
-        #****************************************************
-        print('Dither type (16A, 16B, 16B, 16A)')
-
-        # Setup the group dither pattern array (16*A, 16*B, 16*B, 16*A)
-        As = np.repeat('A', 16)
-        Bs = np.repeat('B', 16)
-
-        if thisName in ABBAswap:
-            # Setup the reverse ABBA array
-            print('Using reverse ABBA values for this group')
-            ABBAarr = np.array([Bs, As, As, Bs]).flatten()
-        else:
-            # Setup the normal ABBA array
-            ABBAarr = np.array([As, Bs, Bs, As]).flatten()
-
-        # Figure out if any of the first images were dropped
-        HWPorder = np.array([1,3,2,4,5,7,6,8,9,11,10,12,13,15,14,16])
-        firstHWP = (np.where(HWPorder == thisGroupHWPs[0]))[0][0]
-
-        # Determine which ABBAinds to use
-        HWPdiff     = np.abs(HWPlist - thisGroupHWPs[0])
-        firstHWPind = np.where(HWPdiff == np.min(HWPdiff))
-        ABBAinds    = thisGroupFileNums - thisGroupFileNums[0] + firstHWP
-
-        # Grab the ABBA values for each file
-        thisGroupABBAs = ABBAarr[ABBAinds]
-
-        # Parse the indices for A images and B images
-        Ainds = np.where(thisGroupABBAs == 'A')
-        Binds = np.where(thisGroupABBAs == 'B')
-
-    # Double check that the pointing for each group is correct.
-    outliersPresent = True
-    while outliersPresent:
-        # Compute the median pointings for A and B dithers
-        A_medRA  = np.median(thisGroupRAs[Ainds])
-        A_medDec = np.median(thisGroupDecs[Ainds])
-        B_medRA  = np.median(thisGroupRAs[Binds])
-        B_medDec = np.median(thisGroupDecs[Binds])
-
-        # Compute the (RA, Dec) offsets from the median pointings
-        A_delRA  = thisGroupRAs[Ainds] - A_medRA
-        A_delDec = thisGroupDecs[Ainds] - A_medDec
-        B_delRA  = thisGroupRAs[Binds] - B_medRA
-        B_delDec = thisGroupDecs[Binds] - B_medDec
-
-        # Search for outliers in either RA **OR** Dec
-        # (more than 1 arcmin off median pointing).
-        A_RA_out  = np.abs(A_delRA) > 1.0/60.0
-        A_Dec_out = np.abs(A_delDec) > 1.0/60.0
-        B_RA_out  = np.abs(B_delRA) > 1.0/60.0
-        B_Dec_out = np.abs(B_delDec) > 1.0/60.0
-
-        # Set a flag to determine if there are still any outliers
-        outliersPresent = (np.sum(np.logical_or(A_RA_out, A_Dec_out)) +
-                           np.sum(np.logical_or(B_RA_out, B_Dec_out)) > 0)
-
-        # If there **DO** still seem to be outliers present,
-        # then swap offending images between groups.
-        if outliersPresent:
-            print('Repairing pointing outliers')
-            pdb.set_trace()
-            # First identify offending images from each group
-            A_out = np.logical_or(A_RA_out, A_Dec_out)
-            B_out = np.logical_or(B_RA_out, B_Dec_out)
-
-            # Now identify which of the Aind and Binds need to be swapped
-            if np.sum(A_out) > 0:
-                AswapInds = Ainds[np.where(A_out)]
-                AkeepInds = Ainds[np.where(np.logical_not(A_out))]
-            if np.sum(B_out) > 0:
-                BswapInds = Binds[np.where(B_out)]
-                BkeepInds = Binds[np.where(np.logical_not(B_out))]
-
-            # Reconstruct the Ainds and Binds arrays
-            Ainds = np.concatenate([AkeepInds, BswapInds])
-            Binds = np.concatenate([BkeepInds, AswapInds])
-
-            # Sort the newly constructed Ainds and Binds arrays
-            AsortArr = SORT(Ainds)
-            Ainds    = Ainds[AsortArr]
-            BsortArr = SORT(Binds)
-            Binds    = Binds[BsortArr]
-
-            # Count the number of images in each group
-            AimgCount = N_ELEMENTS(Ainds)
-            BimgCount = N_ELEMENTS(Binds)
-
-    # *************************************
-    # Now that we have checked for errors,
-    # add these ABBA values to the ABBAlist
-    # *************************************
-    ABBAlist.extend(thisGroupABBAs)
-
-# Now that we have the indices for A and B images for this group,
-# we need to add them to the column to be added to the file index
-fileIndexByName.add_column(Column(name='ABBA',
-                           data=np.array(ABBAlist)),
-                           index = 8)
-
-# Re-sort by file-number
-fileSortInds = np.argsort(fileIndexByName['Filename'])
-fileIndex1   = fileIndexByName[fileSortInds]
-
-#==============================================================================
-# ********************* Write the file to disk ********************************
-# Now that all the information for this dataset has been parsed,
-# write the full index to disk.
-#==============================================================================
-print('')
-print('***************************')
-print('Writing final index to disk')
-print('***************************')
-fileIndex1.write(indexFile, format='csv')
+print('Done!')

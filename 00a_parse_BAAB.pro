@@ -5,7 +5,7 @@
 ; 
 
 ; Define the PPOL directory
-PPOL_dir  = 'C:\Users\Jordan\FITS_data\Mimir_data\PPOL_reduced'
+PPOL_dir  = 'C:\Users\Jordan\FITS_data\Mimir_data\PPOL_Reduced\201611'
 
 ; This will define the relative path to the group summary file
 summaryFile = PPOL_dir + PATH_SEP() + 'S1_Image_Groups_and_Meta_Groups' + PATH_SEP() + 'Group_Summary.sav'
@@ -38,6 +38,7 @@ IF FILE_TEST(summaryFile) THEN BEGIN
     nxny      = SIZE((*G_PTR).GROUP_IMAGE_FLAGS, /DIMENSIONS); Grab the shape of the group summary array
     HWPlist   = [34,    4556,  2261,  6784,  9011,  13534, 11306, 15761, $
                  18056, 22511, 20284, 24806, 27034, 31556, 29261, 33784]
+
     ; Loop through the group summary and build arrays for parsing ABBA groups.
     FOR iGroup = 0, ((*G_PTR).N_GROUPS - 1) DO BEGIN
       PRINT, 'Parsing group ', (*G_PTR).GROUP_NAMES[iGroup]
@@ -50,6 +51,7 @@ IF FILE_TEST(summaryFile) THEN BEGIN
       thisGroupHWPs     = LONARR(thisGroupCount)          ; Initalize an array to store HWP numbers
       thisGroupRAs      = DBLARR(thisGroupCount)          ; Initalize an array to store RAs
       thisGroupDecs     = DBLARR(thisGroupCount)          ; Initalize an array to store Decs
+      thisGroupABBAs    = STRARR(thisGroupCount)          ; Initalize an array to store The ABBA values
       FOR iFile = 0, (thisGroupCount - 1) DO BEGIN        ; Loop through all of the files in this group
         thisFile    = (*G_PTR).GROUP_IMAGES[iGroup, iFile]; Grab the filename for this file
         
@@ -72,6 +74,14 @@ IF FILE_TEST(summaryFile) THEN BEGIN
         thisGroupRAs[iFile]  = telRA                                      ; Store the parsed RA
         thisGroupDecs[iFile] = telDec                                     ; Store the parsed Dec
         
+        comments = SXPAR(thisHead, 'COMMENT')
+        FOREACH comment, comments, iCom DO BEGIN
+          IF STRMID(comment, 0, 3) EQ 'HWP' THEN BEGIN
+            startInd = STREGEX(comment, '- *')
+            endInd   = STREGEX(comment, ' * posn')
+            thisGroupABBAs[iFile] = STRMID(comment, startInd + 2, endInd - startInd - 2)
+          ENDIF
+        ENDFOREACH
       ENDFOR
       
       ; Compute the incremental step for each image in the sequence
@@ -94,9 +104,9 @@ IF FILE_TEST(summaryFile) THEN BEGIN
       
       IF TOTAL(HWPshifts) LT 0.5*thisGroupCount THEN BEGIN
         ;****************************************************
-        ; This group has  the 16(ABBA) dither type.
+        ; This group has  the 16(BAAB) dither type.
         ;****************************************************
-        PRINT, 'Dither type 16(ABBA)'
+        PRINT, 'Dither type 16(BAAB)'
         ; Find places where the HWP change corresponds to a numIncr of 1
         ABBArestart = HWPshifts AND (numIncr EQ 1)
         
@@ -114,10 +124,14 @@ IF FILE_TEST(summaryFile) THEN BEGIN
           STOP
         ENDELSE
         ; Setup the dither pattern array
-        ABBAarr   = ['A','B','B','A']
-        
+        ; ABBAarr   = ['A','B','B','A']
+        ABBAarr   = ['B','A','A','B'] 
+               
         ; Grab the ABBA values for each file
-        thisGroupABBAs = ABBAarr[ABBAinds]
+        thisGroupABBAs2 = ABBAarr[ABBAinds]
+
+        ; Test if the BAAB arrangement from the comments and from HWP rotation rate agree
+        IF total(thisGroupABBAs2 NE thisGroupABBAs) GT 0 THEN STOP
         
         ; Parse the indices for A images and B images
         Ainds = WHERE(thisGroupABBAs EQ 'A', AimgCount)
@@ -126,12 +140,15 @@ IF FILE_TEST(summaryFile) THEN BEGIN
         ;****************************************************
         ; This group has  the (16A, 16B, 16B, 16A) dither type.
         ;****************************************************
+        ; This kind of dither type should not be allowed (for now)
+        CONTINUE
+
         PRINT, 'Dither type (16A, 16B, 16B, 16A)'
         
         ; Setup the group dither pattern array (16*A, 16*B, 16*B, 16*A)
         As = replicate('A', 16)
         Bs = replicate('B', 16)
-        ABBAarr  = [As, Bs, Bs, As]
+        ABBAarr  = [Bs, As, As, Bs]
         
         ; Figure out if any of the first images were dropped
         HWPdiff     = ABS(HWPlist - thisGroupHWPs[0])
@@ -146,65 +163,66 @@ IF FILE_TEST(summaryFile) THEN BEGIN
         Binds = WHERE(thisGroupABBAs EQ 'B', BimgCount)
       ENDELSE
       
-      ; Double check that the pointing for each group is correct.
-      outliersPresent = 1B
-      WHILE outLiersPresent DO BEGIN
-        ; Compute the median pointings for A and B dithers
-        A_medRA  = MEDIAN(thisGroupRAs[Ainds])
-        A_medDec = MEDIAN(thisGroupDecs[Ainds])
-        B_medRA  = MEDIAN(thisGroupRAs[Binds])
-        B_medDec = MEDIAN(thisGroupDecs[Binds])
-        
-        ; Compute the (RA, Dec) offsets from the median pointings
-        A_delRA  = thisGroupRAs[Ainds] - A_medRA
-        A_delDec = thisGroupDecs[Ainds] - A_medDec
-        B_delRA  = thisGroupRAs[Binds] - B_medRA
-        B_delDec = thisGroupDecs[Binds] - B_medDec
-        
-        ; Search for outliers in either RA **OR** Dec
-        ; (more than 1 arcmin off median pointing).
-        A_RA_out  = ABS(A_delRA) GT 1E/60E
-        A_Dec_out = ABS(A_delDec) GT 1E/60E
-        B_RA_out  = ABS(B_delRA) GT 1E/60E
-        B_Dec_out = ABS(B_delDec) GT 1E/60E
-        
-        ; Set a flag to determine if there are still any outliers
-        outliersPresent = ((TOTAL(A_RA_out OR A_Dec_out) + TOTAL(B_RA_out OR B_Dec_out)) GT 0)
-               
-        ; If there **DO** still seem to be outliers present,
-        ; then swap offending images between groups.
-        IF outliersPresent THEN BEGIN
-          PRINT, 'Repairing pointing outliers'
-          STOP
-          ; First identify offending images from each group
-          A_out = (A_RA_out OR A_Dec_out)
-          B_out = (B_RA_out OR B_Dec_out)
-          
-          ; Now identify which of the Aind and Binds need to be swapped
-          IF TOTAL(A_out) GT 0 THEN BEGIN
-            AswapInds = Ainds[WHERE(A_out)]
-            AkeepInds = Ainds[WHERE(~A_out)]
-          ENDIF
-          IF TOTAL(B_out) GT 0 THEN BEGIN
-            BswapInds = Binds[WHERE(B_out)]
-            BkeepInds = Binds[WHERE(~B_out)]
-          ENDIF
-          
-          ; Reconstruct the Ainds and Binds arrays
-          Ainds = [AkeepInds, BswapInds]
-          Binds = [BkeepInds, AswapInds]
-          
-          ; Sort the newly constructed Ainds and Binds arrays
-          AsortArr = SORT(Ainds)
-          Ainds    = Ainds[AsortArr]
-          BsortArr = SORT(Binds)
-          Binds    = Binds[BsortArr]
-          
-          ; Count the number of images in each group
-          AimgCount = N_ELEMENTS(Ainds)
-          BimgCount = N_ELEMENTS(Binds)
-        ENDIF
-      ENDWHILE
+      ; Testing that the comments and HWP rotation rate agree is a better double check than RA/Dec.
+;      ; Double check that the pointing for each group is correct.
+;      outliersPresent = 1B
+;      WHILE outLiersPresent DO BEGIN
+;        ; Compute the median pointings for A and B dithers
+;        A_medRA  = MEDIAN(thisGroupRAs[Ainds])
+;        A_medDec = MEDIAN(thisGroupDecs[Ainds])
+;        B_medRA  = MEDIAN(thisGroupRAs[Binds])
+;        B_medDec = MEDIAN(thisGroupDecs[Binds])
+;        
+;        ; Compute the (RA, Dec) offsets from the median pointings
+;        A_delRA  = thisGroupRAs[Ainds] - A_medRA
+;        A_delDec = thisGroupDecs[Ainds] - A_medDec
+;        B_delRA  = thisGroupRAs[Binds] - B_medRA
+;        B_delDec = thisGroupDecs[Binds] - B_medDec
+;        
+;        ; Search for outliers in either RA **OR** Dec
+;        ; (more than 1 arcmin off median pointing).
+;        A_RA_out  = ABS(A_delRA) GT 1E/60E
+;        A_Dec_out = ABS(A_delDec) GT 1E/60E
+;        B_RA_out  = ABS(B_delRA) GT 1E/60E
+;        B_Dec_out = ABS(B_delDec) GT 1E/60E
+;        
+;        ; Set a flag to determine if there are still any outliers
+;        outliersPresent = ((TOTAL(A_RA_out OR A_Dec_out) + TOTAL(B_RA_out OR B_Dec_out)) GT 0)
+;               
+;        ; If there **DO** still seem to be outliers present,
+;        ; then swap offending images between groups.
+;        IF outliersPresent THEN BEGIN
+;          PRINT, 'Repairing pointing outliers'
+;
+;          ; First identify offending images from each group
+;          A_out = (A_RA_out OR A_Dec_out)
+;          B_out = (B_RA_out OR B_Dec_out)
+;          
+;          ; Now identify which of the Aind and Binds need to be swapped
+;          IF TOTAL(A_out) GT 0 THEN BEGIN
+;            AswapInds = Ainds[WHERE(A_out)]
+;            AkeepInds = Ainds[WHERE(~A_out)]
+;          ENDIF
+;          IF TOTAL(B_out) GT 0 THEN BEGIN
+;            BswapInds = Binds[WHERE(B_out)]
+;            BkeepInds = Binds[WHERE(~B_out)]
+;          ENDIF
+;          
+;          ; Reconstruct the Ainds and Binds arrays
+;          Ainds = [AkeepInds, BswapInds]
+;          Binds = [BkeepInds, AswapInds]
+;          
+;          ; Sort the newly constructed Ainds and Binds arrays
+;          AsortArr = SORT(Ainds)
+;          Ainds    = Ainds[AsortArr]
+;          BsortArr = SORT(Binds)
+;          Binds    = Binds[BsortArr]
+;          
+;          ; Count the number of images in each group
+;          AimgCount = N_ELEMENTS(Ainds)
+;          BimgCount = N_ELEMENTS(Binds)
+;        ENDIF
+;      ENDWHILE
       
       IF (AimgCount GT 0) AND (BimgCount GT 0) THEN BEGIN
         ; If there are A images and B images to parse up,

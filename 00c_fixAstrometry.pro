@@ -177,8 +177,16 @@ PRO PYPOL_REPAIR_ASTROMETRY, thisFile, thisImg, thisHead, ASTROSTARS = astroStar
   useStar = (xGuess GT 20) AND (xGuess LT (sz[0] - 21)) $           ;Update star usage flags
     AND (yGuess GT 20) AND (yGuess LT (sz[1] - 21)) $               ;based on new star (x,y) positions
     AND (astroStars.HMAG LT 14) AND (astroStars.KMAG LT 14)         ;and based on magnitudes
-    
+
+  ; Locate the indices of the usable stars
   useInds = WHERE(useStar, numUse)
+
+  ; Only keep the brightest 25 stars (that's all you'll need!)
+  IF numUse GT 50 THEN BEGIN
+    useInds = useInds[0:24]
+    numUse = N_ELEMENTS(useInds)
+  ENDIF
+
   IF ~(numUse GT 0) THEN STOP ELSE BEGIN                            ;If there are no usable stars, then stop
     xGuess      = xGuess[useInds]                                    ;Otherwise cull the star position estimates
     yGuess      = yGuess[useInds]                                    ;to only include the usable stars
@@ -268,7 +276,7 @@ END
 ; THIS IS WHERE THE USER CAN DEFINE THE SPECIFICS OF THIS PPOL_PROJECT
 ;******************************************************************************
 ; Define the PPOL directory
-PPOL_dir  = 'C:\Users\Jordan\FITS_data\Mimir_data\PPOL_reduced'
+PPOL_dir  = 'C:\Users\Jordan\FITS_data\Mimir_data\PPOL_Reduced\201611'
 
 
 ;******************************************************************************
