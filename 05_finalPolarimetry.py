@@ -275,7 +275,7 @@ for thisTarget, filters in targetFilterDict.items():
         thisPolCalDict = {
             'PE': PE,
             's_PE': s_PE,
-            'PAsign': +1,
+            'PAsign': -1,
             'D_PA': D_PA,
             's_D_PA': s_D_PA
         }
