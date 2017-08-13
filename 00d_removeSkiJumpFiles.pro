@@ -45,13 +45,15 @@ FOR iGroup = 0, ((*G_PTR).N_GROUPS - 1) DO BEGIN
     thisS2file  = PPOL_dir + PATH_SEP() + $           ; Grab the S3 filename for this file
       'S2_Ski_Jump_Fixes' + PATH_SEP() + fileBase
 
-    IF ~FILE_TEST(thisS2file) THEN CONTINUE
+    ; Unfortunately, since PPOL step 2 is imperfect, I need to do this all manually!
+;    ; Skip files which don't have a step 2 counterpart...
+;    IF ~FILE_TEST(thisS2file) THEN CONTINUE
 
     ; Construct the S3 file path
     thisS3file  = PPOL_dir + PATH_SEP() + $           ; Grab the S3 filename for this file
       'S3_Astrometry' + PATH_SEP() + fileBase
 
-    ; If the S3 file does not exist, then don't bother
+    ; If the S3 file does not exist, then don't bother classifying
     IF ~FILE_TEST(thisS3file) THEN CONTINUE
 
     ; Read in the array and display to user
@@ -72,6 +74,7 @@ FOR iGroup = 0, ((*G_PTR).N_GROUPS - 1) DO BEGIN
         PRINT, 'Backing up S3 file'
         moveFile = backup_dir + PATH_SEP() + fileBase
         FILE_MOVE, thisS3file, moveFile
+        
       ENDIF ELSE BEGIN
         PRINT, 'No S3  file found. Doing nothing.'
       ENDELSE

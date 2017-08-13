@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Combines all the images for a given (TARGET, FILTER, POLPOS) combination to
+Combines all the images for a given (TARGET, FILTER, HWP) combination to
 produce a single, average image.
 
 Estimates the sky background level of the on-target position at the time of the
 on-target observation using a bracketing pair of off-target observations through
-the same POLPOS polaroid rotation value. Subtracts this background level from
+the same HWP polaroid rotation value. Subtracts this background level from
 each on-target image to produce background free images. Applies an airmass
 correction to each image, and combines these final image to produce a background
 free, airmass corrected, average image.
@@ -36,6 +36,11 @@ from matplotlib import pyplot as plt
 # Add the AstroImage class
 import astroimage as ai
 
+# Add the header handler to the BaseImage class
+from Mimir_header_handler import Mimir_header_handler
+ai.reduced.ReducedScience.set_header_handler(Mimir_header_handler)
+ai.set_instrument('mimir')
+
 #==============================================================================
 # *********************** CUSTOM USER CODE ************************************
 # this is where the user specifies where the raw data is stored
@@ -47,11 +52,15 @@ import astroimage as ai
 # single "metagroup" for all observations of that target. The default behavior
 # is to go ahead and combine everything into a single, large "metagroup". The
 # calibration data should probably not be processed as a metagroup though.
-processSubGroupList = ['Taurus_Cal', 'Orion_Cal', 'Cyg_OB2']
+processSubGroupList = []
 processSubGroupList = [t.upper() for t in processSubGroupList]
 
+# Define the location of the PPOL reduced data to be read and worked on
+PPOL_data = 'C:\\Users\\Jordan\\FITS_data\\Mimir_data\\PPOL_Reduced\\201611\\'
+S3_dir    = os.path.join(PPOL_data, 'S3_Astrometry')
+
 # This is the location where all pyPol data will be saved
-pyPol_data = 'C:\\Users\\Jordan\\FITS_data\\PRISM_data\\pyPol_data\\201612'
+pyPol_data = 'C:\\Users\\Jordan\\FITS_data\\Mimir_data\\pyPol_Reduced\\201611'
 
 # This is the location of the previously generated masks (step 4)
 maskDir = os.path.join(pyPol_data, 'Masks')
@@ -61,11 +70,11 @@ polarimetryDir = os.path.join(pyPol_data, 'Polarimetry')
 if (not os.path.isdir(polarimetryDir)):
     os.mkdir(polarimetryDir, 0o755)
 
-polAngDir = os.path.join(polarimetryDir, 'polAngImgs')
-if (not os.path.isdir(polAngDir)):
-    os.mkdir(polAngDir, 0o755)
+HWPDir = os.path.join(polarimetryDir, 'HWPImgs')
+if (not os.path.isdir(HWPDir)):
+    os.mkdir(HWPDir, 0o755)
 
-bkgPlotDir = os.path.join(polAngDir, 'bkgPlots')
+bkgPlotDir = os.path.join(HWPDir, 'bkgPlots')
 if (not os.path.isdir(bkgPlotDir)):
     os.mkdir(bkgPlotDir, 0o755)
 
@@ -95,8 +104,9 @@ if (not os.path.isdir(bkgPlotDir)):
 # R          0.19 +/- 0.03             0.068
 # I          0.16 +/- 0.02             0.055
 
-kappa = dict(zip(['U',    'B',    'V',    'R'   ],
-                 [0.60,   0.40,   0.26,   0.19  ]))
+# TODO: Ask Dan about atmospheric extinction from airmass at NIR
+kappa = dict(zip(['U',  'B',  'V',  'R',  'I',  'J',  'H',  'K'  ],
+                 [0.60, 0.40, 0.26, 0.19, 0.16, 0.05, 0.01, 0.005]))
 
 
 # Read in the indexFile data and select the filenames
@@ -115,8 +125,7 @@ useFileRows = np.where(useFiles)
 fileIndex = fileIndex[useFileRows]
 
 # Define an approximate pixel scale
-pixScale  = 0.39*(u.arcsec/u.pixel)
-
+pixScale  = 0.5789*(u.arcsec/u.pixel)
 
 # TODO: implement a FWHM seeing cut... not yet working because PSF getter seems
 # to be malfunctioning in step 2
@@ -166,17 +175,17 @@ for group in fileIndexByTarget.groups:
     # Grab the atmospheric extinction coefficient for this wavelength
     thisKappa = kappa[thisFilter]
 
-    # Further divide this group by its constituent POLPOS values
-    indexByPolAng = group.group_by(['POLPOS'])
+    # Further divide this group by its constituent HWP values
+    indexByPolAng = group.group_by(['IPPA'])
 
-    # Loop over each of the polAng values, as these are independent from
+    # Loop over each of the HWP values, as these are independent from
     # eachother and should be treated entirely separately from eachother.
-    for polAngGroup in indexByPolAng.groups:
-        # Grab the current polAng information
-        thisPolAng = np.unique(polAngGroup['POLPOS'].data)[0]
+    for IPPAgroup in indexByPolAng.groups:
+        # Grab the current HWP information
+        thisIPPA = np.unique(IPPAgroup['IPPA'].data)[0]
 
         # Update the user on processing status
-        print('\tPol Ang : {0}'.format(thisPolAng))
+        print('\tIPPA : {0}'.format(thisIPPA))
 
         # For ABBA dithers, we need to compute the background levels on a
         # sub-group basis. If this target has not been selected for subGroup
@@ -187,7 +196,7 @@ for group in fileIndexByTarget.groups:
         # (target, filter, pol-ang) combination
         imgList = []
 
-        indexByGroupID = polAngGroup.group_by(['GROUP_ID'])
+        indexByGroupID = IPPAgroup.group_by(['GROUP_ID'])
         for subGroup in indexByGroupID.groups:
             # Grab the numae of this subGroup
             thisSubGroup = str(np.unique(subGroup['OBJECT'])[0])
@@ -196,11 +205,11 @@ for group in fileIndexByTarget.groups:
 
             # Construct the output file name and test if it alread exsits.
             if thisTarget in processSubGroupList:
-                outFile = '_'.join([thisTarget, thisSubGroup, str(thisPolAng)])
-                outFile = os.path.join(polAngDir, outFile) + '.fits'
+                outFile = '_'.join([thisTarget, thisSubGroup, str(thisIPPA)])
+                outFile = os.path.join(HWPDir, outFile) + '.fits'
             elif thisTarget not in processSubGroupList:
-                outFile = '_'.join([thisTarget, thisFilter, str(thisPolAng)])
-                outFile = os.path.join(polAngDir, outFile) + '.fits'
+                outFile = '_'.join([thisTarget, thisFilter, str(thisIPPA)])
+                outFile = os.path.join(HWPDir, outFile) + '.fits'
 
             # Test if this file has already been constructed and either skip
             # this subgroup or break out of the subgroup loop.
@@ -232,15 +241,23 @@ for group in fileIndexByTarget.groups:
                 print(progressString.format(iFile+1), end='\r')
 
                 # Read in a temporary compy of this image
-                tmpImg = ai.reduced.ReducedScience.read(filename)
+                PPOL_file = os.path.join(S3_dir, filename)
+                tmpImg = ai.reduced.ReducedScience.read(PPOL_file)
 
                 # Crop the edges of this image
                 ny, nx = tmpImg.shape
                 binningArray = np.array(tmpImg.binning)
-                # TODO: COMPUTE the proper cropping to get a (1000, 1000) image
-                cx, cy = (np.array([16, 32])/binningArray).astype(int)
 
-                tmpImg = tmpImg[cy:ny-cy, cx:nx-cx]
+                # Compute the amount to crop to get a 1000 x 1000 image
+                cy, cx = (ny - 1000, nx - 1000)
+
+                # Compute the crop boundaries and apply them
+                lf = np.int(np.round(0.5*cx))
+                rt = lf + 1000
+                bt = np.int(np.round(0.5*cy))
+                tp = bt + 1000
+
+                tmpImg = tmpImg[bt:tp, lf:rt]
 
                 # Grab the on-off target value for this image
                 thisAB = subGroup['AB'][iFile]
@@ -296,6 +313,8 @@ for group in fileIndexByTarget.groups:
 
             # Build a supersky image from these off-target images
             superskyImage = BimageStack.produce_supersky()
+
+            import pdb; pdb.set_trace()
 
             # Locate regions outside of a 5% deviation
             tmpSuperskyData  = superskyImage.data
@@ -361,7 +380,7 @@ for group in fileIndexByTarget.groups:
             plt.scatter(AdatetimeList, AbkgList, marker='o', facecolor='r')
             plt.xlabel('Julian Date')
             plt.ylabel('Background Value [ADU]')
-            figName = '_'.join([thisTarget, thisSubGroup, str(thisPolAng)])
+            figName = '_'.join([thisTarget, thisSubGroup, str(thisIPPA)])
             figName = os.path.join(bkgPlotDir, figName) + '.png'
             plt.savefig(figName, dpi=300)
             plt.close('all')

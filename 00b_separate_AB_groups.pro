@@ -5,7 +5,7 @@
 ; 
 
 ; Define the PPOL directory
-PPOL_dir  = 'C:\Users\Jordan\FITS_data\Mimir_data\PPOL_Reduced\201611'
+PPOL_dir  = 'C:\Users\Jordan\FITS_data\Mimir_data\PPOL_Reduced\201611\notPreFlattened'
 
 ; This will define the relative path to the group summary file
 summaryFile = PPOL_dir + PATH_SEP() + 'S1_Image_Groups_and_Meta_Groups' + PATH_SEP() + 'Group_Summary.sav'
@@ -52,6 +52,8 @@ IF FILE_TEST(summaryFile) THEN BEGIN
       thisGroupRAs      = DBLARR(thisGroupCount)          ; Initalize an array to store RAs
       thisGroupDecs     = DBLARR(thisGroupCount)          ; Initalize an array to store Decs
       thisGroupABBAs    = STRARR(thisGroupCount)          ; Initalize an array to store The ABBA values
+      AimgCount         = 0                               ; Initalize the A/B counters to zero so that groups are only "shifted over"...
+      BimgCount         = 0                               ; ...if they actually contain A and B data.
       FOR iFile = 0, (thisGroupCount - 1) DO BEGIN        ; Loop through all of the files in this group
         thisFile    = (*G_PTR).GROUP_IMAGES[iGroup, iFile]; Grab the filename for this file
         
@@ -74,8 +76,9 @@ IF FILE_TEST(summaryFile) THEN BEGIN
         thisGroupRAs[iFile]  = telRA                                      ; Store the parsed RA
         thisGroupDecs[iFile] = telDec                                     ; Store the parsed Dec
         
+        ; Parse the A/B value from the header comments
         comments = SXPAR(thisHead, 'COMMENT')
-        FOREACH comment, comments, iCom DO BEGIN
+        FOREACH comment, comments DO BEGIN
           IF STRMID(comment, 0, 3) EQ 'HWP' THEN BEGIN
             startInd = STREGEX(comment, '- *')
             endInd   = STREGEX(comment, ' * posn')
@@ -131,7 +134,7 @@ IF FILE_TEST(summaryFile) THEN BEGIN
         thisGroupABBAs2 = ABBAarr[ABBAinds]
 
         ; Test if the BAAB arrangement from the comments and from HWP rotation rate agree
-        IF total(thisGroupABBAs2 NE thisGroupABBAs) GT 0 THEN STOP
+        IF TOTAL(thisGroupABBAs2 NE thisGroupABBAs) GT 0 THEN STOP
         
         ; Parse the indices for A images and B images
         Ainds = WHERE(thisGroupABBAs EQ 'A', AimgCount)
@@ -277,7 +280,7 @@ IF FILE_TEST(summaryFile) THEN BEGIN
         ; Finally increase the number of groups to account for the newly generated group.
         (*G_PTR_out).N_GROUPS = (*G_PTR_out).N_GROUPS + 1     ; Increase the number of groups
       ENDIF ELSE BEGIN
-        PRINT, 'That is weird. The are only A images or B images... you sure this is right?'
+        PRINT, 'That is weird. The are only A images or B images... are you sure this is right?'
         STOP
       ENDELSE
     ENDFOR

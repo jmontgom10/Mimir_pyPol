@@ -49,27 +49,31 @@ global maskDir
 # Add the AstroImage class
 import astroimage as ai
 
+# Add the header handler to the BaseImage class
+from Mimir_header_handler import Mimir_header_handler
+ai.reduced.ReducedScience.set_header_handler(Mimir_header_handler)
+ai.set_instrument('mimir')
+
 #==============================================================================
 # *********************** CUSTOM USER CODE ************************************
 # this is where the user specifies where the raw data is stored
 # and some of the subdirectory structure to find the actual .FITS images
 #==============================================================================
-# This is the location of all pyBDP data (index, calibration images, reduced...)
-pyBDP_data = 'C:\\Users\\Jordan\\FITS_data\\PRISM_data\\pyBDP_data\\201612'
+# Define the location of the PPOL reduced data to be read and worked on
+PPOL_data = 'C:\\Users\\Jordan\\FITS_data\\Mimir_data\\PPOL_Reduced\\201611\\'
+S3_dir    = os.path.join(PPOL_data, 'S3_Astrometry')
 
 # This is the location where all pyPol data will be saved
-pyPol_data = 'C:\\Users\\Jordan\\FITS_data\\PRISM_data\\pyPol_data\\201612'
+pyPol_data='C:\\Users\\Jordan\\FITS_data\\Mimir_data\\pyPol_Reduced\\201611'
 
 # The user can speed up the process by defining the "Target" values from
 # the fileIndex to be considered for masking.
 # Masks can onlybe produced for targets in this list.
-targets = ['NGC2023', 'NGC7023']
+targets = ['NGC7023']
 
-# This is the location of the pyBDP processed Data
-pyBDP_reducedDir = os.path.join(pyBDP_data, 'pyBDP_reduced_images')
-
-# Setup new directory for polarimetry data
+# Setup new directory for masks
 maskDir = os.path.join(pyPol_data, 'Masks')
+maskDir = os.path.join(maskDir, 'artifactMasks')
 if (not os.path.isdir(maskDir)):
     os.mkdir(maskDir, 0o755)
 
@@ -165,7 +169,7 @@ def on_key(event):
             # Read in the new files
             prevImg = thisImg
             thisImg = nextImg
-            nextImg = ai.ReducedScience.read(fileList[(imgNum + 1) % len(fileList)])
+            nextImg = ai.reduced.ReducedScience.read(fileList[(imgNum + 1) % len(fileList)])
 
             # Update target info
             prevTarget = thisTarget
@@ -192,7 +196,7 @@ def on_key(event):
             # Read in the new files
             nextImg = thisImg
             thisImg = prevImg
-            prevImg = ai.ReducedScience.read(fileList[(imgNum - 1) % len(fileList)])
+            prevImg = ai.reduced.ReducedScience.read(fileList[(imgNum - 1) % len(fileList)])
 
             # Update target info
             nextTarget = thisTarget
@@ -226,21 +230,26 @@ def on_key(event):
         if os.path.isfile(thisMaskFile):
             # If the mask for this file exists, use it
             print('using this mask: ',os.path.basename(thisMaskFile))
-            maskImg = ai.ReducedScience.read(thisMaskFile)
+            maskImg = ai.reduced.ReducedScience.read(thisMaskFile)
         elif os.path.isfile(prevMaskFile) and (prevTarget == thisTarget):
             # Otherwise check for the mask for the previous file
             print('using previous mask: ',os.path.basename(prevMaskFile))
-            maskImg = ai.ReducedScience.read(prevMaskFile)
+            maskImg = ai.reduced.ReducedScience.read(prevMaskFile)
         elif os.path.isfile(nextMaskFile) and (nextTarget == thisTarget):
             # Then check for the mask of the next file
             print('using next mask: ',os.path.basename(nextMaskFile))
-            maskImg = ai.ReducedScience.read(nextMaskFile)
+            maskImg = ai.reduced.ReducedScience.read(nextMaskFile)
         else:
             # If none of those files exist, build a blank slate
             # Build a mask template (0 = not masked, 1 = masked)
             maskImg       = thisImg.copy()
             maskImg.filename = thisMaskFile
             maskImg = maskImg.astype(np.int16)
+            # Make sure the uncertainty array is removed from the image
+            try:
+                del maskImg.uncertainty
+            except:
+                pass
 
         # Update contour plot (clear old lines redo contouring)
         axarr[1].collections = []
@@ -261,14 +270,14 @@ def on_key(event):
         axList[1].set_title(os.path.basename(thisImg.filename))
 
         prevStr   = (str(prevImg.header['OBJECT']) + '\n' +
-                     str(prevImg.header['FILTNME3'] + '\n' +
-                     str(prevImg.header['POLPOS'])))
+                     str(prevImg.header['FILTNME2'] + '\n' +
+                     str(prevImg.header['HWP'])))
         thisStr   = (str(thisImg.header['OBJECT']) + '\n' +
-                     str(thisImg.header['FILTNME3'] + '\n' +
-                     str(thisImg.header['POLPOS'])))
+                     str(thisImg.header['FILTNME2'] + '\n' +
+                     str(thisImg.header['HWP'])))
         nextStr   = (str(nextImg.header['OBJECT']) + '\n' +
-                     str(nextImg.header['FILTNME3'] + '\n' +
-                     str(nextImg.header['POLPOS'])))
+                     str(nextImg.header['FILTNME2'] + '\n' +
+                     str(nextImg.header['HWP'])))
         prevLabel.set_text(prevStr)
         thisLabel.set_text(thisStr)
         nextLabel.set_text(nextStr)
@@ -333,11 +342,12 @@ brushSize = 3      # (5xbrushSize pix) is the size of the region masked
 # 3. Dither (pattern)
 # 4. Polaroid Angle
 fileIndexByTarget = fileIndex.group_by(
-    ['TARGET', 'FILTER', 'POLPOS']
+    ['TARGET', 'FILTER']
 )
 
 # Add the information to the fileList and targetList variables
-fileList = fileIndexByTarget['FILENAME'].data.tolist()
+fileList   = fileIndexByTarget['FILENAME'].data.tolist()
+fileList   = [os.path.join(S3_dir, f) for f in fileList]
 targetList = fileIndexByTarget['TARGET'].data.tolist()
 
 #*************************************
@@ -345,9 +355,9 @@ targetList = fileIndexByTarget['TARGET'].data.tolist()
 #*************************************
 
 # Read in an image for masking
-prevImg = ai.ReducedScience.read(fileList[imgNum - 1])
-thisImg = ai.ReducedScience.read(fileList[imgNum])
-nextImg = ai.ReducedScience.read(fileList[imgNum + 1])
+prevImg = ai.reduced.ReducedScience.read(fileList[imgNum - 1])
+thisImg = ai.reduced.ReducedScience.read(fileList[imgNum])
+nextImg = ai.reduced.ReducedScience.read(fileList[imgNum + 1])
 
 # Log the targets of the curent panes
 prevTarget = targetList[imgNum - 1]
@@ -367,7 +377,7 @@ nextTarget = targetList[imgNum + 1]
 maskFile = os.path.join(maskDir, os.path.basename(thisImg.filename))
 if os.path.isfile(maskFile):
     # If the mask file exists, use it
-    maskImg = ai.ReducedScience.read(maskFile)
+    maskImg = ai.reduced.ReducedScience.read(maskFile)
 else:
     # If the mask file does not exist, build a blank slate
     # Build a mask template (0 = not masked, 1 = masked)
@@ -422,14 +432,14 @@ plt.subplots_adjust(left = 0.04, bottom = 0.04, right = 0.98, top = 0.96,
 # Add some figure annotation
 thisTitle = axarr[1].set_title(os.path.basename(thisImg.filename))
 prevStr   = (str(prevImg.header['OBJECT']) + '\n' +
-             str(prevImg.header['FILTNME3'] + '\n' +
-             str(prevImg.header['POLPOS'])))
+             str(prevImg.header['FILTNME2'] + '\n' +
+             str(prevImg.header['HWP'])))
 thisStr   = (str(thisImg.header['OBJECT']) + '\n' +
-             str(thisImg.header['FILTNME3'] + '\n' +
-             str(thisImg.header['POLPOS'])))
+             str(thisImg.header['FILTNME2'] + '\n' +
+             str(thisImg.header['HWP'])))
 nextStr   = (str(nextImg.header['OBJECT']) + '\n' +
-             str(nextImg.header['FILTNME3'] + '\n' +
-             str(nextImg.header['POLPOS'])))
+             str(nextImg.header['FILTNME2'] + '\n' +
+             str(nextImg.header['HWP'])))
 prevLabel = axarr[0].text(20, 875, prevStr,
                           color = 'white', size = 'medium')
 thisLabel = axarr[1].text(20, 875, thisStr,
@@ -450,7 +460,7 @@ redLines  = axarr[1].plot([thisShape[0]/2, thisShape[0]/2], [0, thisShape[1]],
 #********************************************
 
 # Connect the event manager...
-cid1 = fig.canvas.mpl_connect('button_press_event',on_click)
+cid1 = fig.canvas.mpl_connect('button_press_event', on_click)
 cid2 = fig.canvas.mpl_connect('key_press_event', on_key)
 
 # NOW show the image (without continuing execution)

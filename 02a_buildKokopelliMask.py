@@ -1,3 +1,8 @@
+"""
+Build a simple mask to cover up the 'Kokopelli' features in the Mimir detector.
+This mask is useful at several stages of te data reduction, so it should be
+generated once and used whenever necessary.
+"""
 # This script will generate a mask to cover Mimir's kokopelli crack.
 import numpy as np
 from astropy.io import fits

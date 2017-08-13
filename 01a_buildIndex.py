@@ -17,6 +17,7 @@ Saves the index file with a USE and GROUP_ID columns added to the table.
 #Import whatever modules will be used
 import os
 import sys
+import datetime
 import time
 import numpy as np
 import matplotlib.pyplot as plt
@@ -35,7 +36,7 @@ import astroimage as ai
 # and some of the subdirectory structure to find the actual .FITS images
 #==============================================================================
 # Set the directory for the PPOL reduced data
-PPOL_data = 'C:\\Users\\Jordan\\FITS_data\\Mimir_data\\PPOL_Reduced\\201611\\'
+PPOL_data = 'C:\\Users\\Jordan\\FITS_data\\Mimir_data\\PPOL_Reduced\\201611\\notPreFlattened'
 S3_dir    = os.path.join(PPOL_data, 'S3_Astrometry')
 
 # This is the location where all pyPol data will be saved
@@ -52,10 +53,7 @@ indexFile = os.path.join(pyPol_data, 'reducedFileIndex.csv')
 targetList = [
     'M78',
     'NGC7023',
-    'NGC2023',
-    'Orion_Cal',
-    'Cyg_OB2',
-    'Elias'
+    'NGC2023'
 ]
 
 # Create a dictionary with known group name problems. They keys should be the
@@ -66,46 +64,7 @@ problematicGroupNames = {'NGC723_H3': 'NGC7023_H3'}
 # Force all the targets to be upper case to remove ambiguity
 targetList = [t.upper() for t in targetList]
 
-# ################################################################################
-# # Define a recursive file search which takes a parent directory and returns all
-# # the FILES (not DIRECTORIES) beneath that node.
-# def recursive_file_search(parentDir, exten='', fileList=[]):
-#     # Query the elements in the directory
-#     subNodes = os.listdir(parentDir)
-#
-#     # Loop through the nodes...
-#     for node in subNodes:
-#         # If this node is a directory,
-#         thisPath = os.path.join(parentDir, node)
-#         if os.path.isdir(thisPath):
-#             # then drop down recurse the function
-#             recursive_file_search(thisPath, exten, fileList)
-#
-#         else:
-#             fileDirName = os.path.basename(
-#                 os.path.normpath(
-#                     os.path.dirname(thisPath)
-#                 )
-#             )
-#             # *** ONLY ACCEPT FILES IN THE 'polarimetry' DIRECTORIES ***
-#             if fileDirName ==  'polarimetry':
-#                 # otherwise test the extension,
-#                 # and append the node to the fileList
-#                 if len(exten) > 0:
-#                     # If an extension was defined,
-#                     # then test if this file is the right extension
-#                     exten1 = (exten[::-1]).upper()
-#                     if (thisPath[::-1][0:len(exten1)]).upper() == exten1:
-#                         fileList.append(thisPath)
-#                 else:
-#                     fileList.append(thisPath)
-#             else: pass
-#
-#     # Return the final list to the user
-#     return fileList
-
-
-
+################################################################################
 # Generate a list of files in the 'polarimetry' directories
 # fileList = np.array(recursive_file_search(BDP_data, exten='.fits'))
 fileList = np.array(os.listdir(S3_dir))
@@ -116,26 +75,41 @@ fileNums = np.array([f.split('_')[0] for f in fileNums], dtype=np.int64)
 sortInds = fileNums.argsort()
 fileList = fileList[sortInds]
 
+# Define a dictionary for translating HWP rotation into IPPA
+HWPstepList    = np.array([
+    0, 33, 67, 100,
+    133, 167, 200, 233,
+    267, 300, 333, 367,
+    400, 433, 467, 500
+])
+HWPlist         = np.arange(16, dtype=int) + 1
+IPPAlist        = np.array(4*[0, 45, 90, 135])
+HWPstep_to_HWP  = dict(zip(HWPstepList, HWPlist))
+HWPstep_to_IPPA = dict(zip(HWPstepList, IPPAlist))
+
 # Test for image type
 print('\nCategorizing files into TARGET, HWP, BAAB\n')
 startTime = time.time()
 # Begin by initalizing some arrays to store the image classifications
-OBJECT   = []
-OBSTYPE  = []
-FILTER   = []
-TELRA    = []
-TELDEC   = []
-EXPTIME  = []
-HWP      = []
-AB       = []
-NIGHT    = []
+OBJECT  = []
+OBSTYPE = []
+FILTER  = []
+TELRA   = []
+TELDEC  = []
+EXPTIME = []
+HWP     = []
+IPPA    = []
+AB      = []
+NIGHT   = []
+MJD     = []
 percentage = 0
 
 #Loop through each file in the fileList variable
 numberOfFiles = len(fileList)
 for iFile, filename in enumerate(fileList):
     # Read in the file
-    thisHDU    = fits.open(os.path.join(S3_dir, filename))
+    thisFile   = os.path.join(S3_dir, filename)
+    thisHDU    = fits.open(thisFile)
     thisHeader = thisHDU[0].header
 
     # Grab the OBJECT header value
@@ -162,7 +136,14 @@ for iFile, filename in enumerate(fileList):
         TELDEC.append(0)
 
     # Grab the HWP header value
-    HWP.append(thisHeader['HWP'])
+    thisHWP     = thisHeader['HWP']
+    HWPdiff     = np.abs(HWPstepList - thisHWP)
+    thisHWPstep = HWPstepList[HWPdiff.argmin()]
+    thisHWP     = HWPstep_to_HWP[thisHWPstep]
+    HWP.append(thisHWP)
+
+    # Apped the IPPA equivalent
+    IPPA.append(HWPstep_to_IPPA[thisHWPstep])
 
     # Search for the A-pos B-pos value
     if 'COMMENT' in thisHeader:
@@ -188,6 +169,29 @@ for iFile, filename in enumerate(fileList):
     # Assign a NIGHT value for this image
     NIGHT.append(''.join((os.path.basename(filename).split('.'))[0]))
 
+    ############################################################################
+    # Compute the julian date for this observation
+    # Compute proleptic Gregorian date (Number of days since 0001-01-01 AD)
+    thisDatetime = datetime.datetime.strptime(
+        thisHeader['DATE'],
+        '%Y-%m-%dT%H:%M:%S'
+    )
+    prolepticGregorianDate = thisDatetime.toordinal()
+
+    # Grab the time of this observation
+    tmpTime = thisDatetime.time()
+
+    # Compute the fraction of a day represented by the above time
+    fractionOfDay = (
+        (tmpTime.hour + (tmpTime.minute + (tmpTime.second/60.0))/60.0)/24.0
+    )
+
+    # Compute the julian date (including the fraction of a day)
+    julianDate = prolepticGregorianDate + fractionOfDay + 1721424.5
+    thisMJD    = julianDate - 2400000.5
+    MJD.append(julianDate)
+    ############################################################################
+
     # Count the files completed and print update progress message
     percentage1  = np.floor(100*iFile/numberOfFiles)
     if percentage1 != percentage:
@@ -200,10 +204,11 @@ print('\nFile processing completed in {0:g} seconds'.format(endTime - startTime)
 
 # Query the user about the targets of each group...
 # Write the file index to disk
-reducedFileIndex = Table([ fileList,   NIGHT,   OBSTYPE,   OBJECT,   FILTER,
-                    TELRA,   TELDEC,   EXPTIME,   HWP,   AB],
-          names = ['FILENAME', 'NIGHT', 'OBSTYPE', 'OBJECT', 'FILTER',
-                   'TELRA', 'TELDEC', 'EXPTIME', 'HWP', 'AB'])
+reducedFileIndex = Table(
+    [fileList, NIGHT, MJD, OBSTYPE, OBJECT,
+     FILTER, TELRA, TELDEC, EXPTIME, HWP, IPPA, AB],
+    names = ['FILENAME', 'NIGHT', 'MJD', 'OBSTYPE', 'OBJECT',
+    'FILTER', 'TELRA', 'TELDEC', 'EXPTIME', 'HWP', 'IPPA', 'AB'])
 
 # Remap the filenames to be the reduced filenames
 fileBasenames    = [os.path.basename(f) for f in reducedFileIndex['FILENAME']]
@@ -333,6 +338,9 @@ groupIndex.add_column(targetColumn, index=5)
 # Re-order by filename. Start by getting the sorting array
 sortInds = groupIndex['FILENAME'].data.argsort()
 reducedFileIndex = groupIndex[sortInds]
+
+# Add a "BACKGROUND" column
+reducedFileIndex['BACKGROUND'] = -1e6*np.ones(len(reducedFileIndex))
 
 # Finally, add a column of "use" flags at the first index
 useColumn = Column(name='USE', data=np.ones((len(reducedFileIndex),), dtype=int))

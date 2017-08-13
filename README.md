@@ -117,7 +117,7 @@ Run the step 6 scaling factor computation as usual for all the "A" groups. This 
 
 Now that the scaling factors for each individual group have been computed, all the groups for a given target and filter can be combined into a single "metagroup" at step 6. This compute the relative value of the correction factors between different observed groups (even across multiple nights). *These* are the correction factors which will ultimately be used to combine *all* the observations of a given target-filter-HWP angle combination into a single average image.
 
-## 04_computeAverageHWPimages.py
+## 04_computeAverageIPPAimages.py
 
 This Python script computes one average image per target per filter per HWP rotation angle using the metagroup scaling factors computed in PPOL step 6. The results should be examined for sanity! Any oddities in these images are guaranteed to show up in the final polarimetry, so if something is off in the polarimetry, there's a good chance it happens in this script.
 
@@ -125,7 +125,7 @@ This Python script computes one average image per target per filter per HWP rota
 
 Once the observations have been reduced to 16 master HWP rotation angle images per target, these can be further reduced to yield Stokes I, Q, and U images. That processing is taken care of in this script. First, the alignment is computed to sub-pixel accuracy, which is absolutely critical.
 
-After the HWP images have been aligned (across both H- and Ks-band), the average Stokes images are computed. The uncertainty in the Q and U are forced to be equal to the average of the two (sQ' = sU' = 0.5*(sQ + sU)), and then a rotated Q and U image can be computed with with Gaussian error-propagation being correctly handled by the AstroImage "ReducedScience" class. These rotated and polarimetric efficiency corrected images are saved to disk.
+After the HWP images have been aligned (across both H- and Ks-band), the average Stokes images are computed. The uncertainty in the Q and U are forced to be equal to the average of the two (sQ' = sU' = 0.5*(sQ + sU)), and then a rotated Q and U image can be computed with with Gaussian error-propagation being handled by the AstroImage "ReducedScience" class. These rotated and polarimetric efficiency corrected images are saved to disk.
 
 ## 06_photometricCalibration.py
 

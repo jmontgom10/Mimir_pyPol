@@ -8,6 +8,7 @@ Uses the 'StokesParameters' class to compute Stokes and polarization images.
 import os
 import copy
 import sys
+from datetime import datetime
 
 # Scipy/numpy imports
 import numpy as np
@@ -19,6 +20,7 @@ from astropy.stats import sigma_clipped_stats
 
 # Import astroimage
 import astroimage as ai
+ai.set_instrument('Mimir')
 
 #==============================================================================
 # *********************** CUSTOM USER CODE ************************************
@@ -26,55 +28,130 @@ import astroimage as ai
 # and some of the subdirectory structure to find the actual .FITS images
 #==============================================================================
 
+# Specify the location of the PPOL *software*
+# (where calibration constants are saved)
+PPOLsoftwareDir = 'C:\\Users\\Jordan\\IDL8_MSP_Workspace\\MSP_PPOL'
+Hpol_calDir     = os.path.join(PPOLsoftwareDir, 'H-Pol_Pinst_Default')
+Kpol_calDir     = os.path.join(PPOLsoftwareDir, 'K-Pol_Pinst_Default')
+
 # # This is a list of targets which have a hard time with the "cross_correlate"
 # # alignment method, so use "wcs" method instead
 # wcsAlignmentList = ['NGC7023', 'NGC2023']
 #
 # This is the location where all pyPol data will be saved
-pyPol_data = 'C:\\Users\\Jordan\\FITS_data\\PRISM_data\\pyPol_data\\201612\\'
+pyPol_data = 'C:\\Users\\Jordan\\FITS_data\\Mimir_data\\pyPol_Reduced\\201611\\'
 
 # Specify which (target, filter) pairs to process
-# targetsToProcess = ['NGC2023', 'NGC7023', 'NGC891', 'NGC4565']
-targetsToProcess = ['NGC891', 'NGC4565', 'NGC2023', 'NGC7023']
-filtersToProcess = ['V', 'R']
+targetFilterDict = {
+    'NGC2023':['H', 'Ks'],
+    'NGC7023':['H', 'Ks'],
+    'M78':['H', 'Ks']
+}
 
-# Setup new directory for polarimetry data
+# These are the directories where polarimetry data are stored
 polarimetryDir = os.path.join(pyPol_data, 'Polarimetry')
+IPPAdir = os.path.join(polarimetryDir, 'IPPAimages')
 
-polAngDir = os.path.join(polarimetryDir, 'polAngImgs')
-
-stokesDir = os.path.join(polarimetryDir, 'stokesImgs')
+stokesDir = os.path.join(polarimetryDir, 'stokesImages')
 if (not os.path.isdir(stokesDir)):
     os.mkdir(stokesDir, 0o755)
 
-# Read in the polarization calibration constants
-polCalFile      = os.path.join(pyPol_data, 'polCalConstants.csv')
-polCalConstants = Table.read(polCalFile)
+################################################################################
+# Write a quick function to parse the P_inst file
+def parsePinstFile(filename):
+    """Reads the supplied file and returns the information as a dictionary"""
+    try:
+        # Open the file to read its contents
+        pinstFile = open(filename, 'r')
 
-# Define a set of polAng values for reference within the loops
-polAngs = [0, 200, 400, 600]
+        # Initalize a dictionary to return
+        PinstDict = {}
+
+        # Loop through each line of the file
+        for line in pinstFile:
+            # Check if this line has some valuable information
+            if (line[0:3] != 'HIST') and ('=' in line):
+                # Split the line at the equal sign
+                splitLine = line.split('=')
+
+                # Parse the split line
+                key = splitLine[0].strip()
+
+                # Split on the forward slash
+                value, comment = splitLine[1].split('/')
+
+                # Convert the value into a float (ignore comment for now)
+                value = float(value)
+
+                # Add this key, value pair to the dictionary
+                PinstDict[key] = value
+
+    except:
+        raise
+
+    return PinstDict
+################################################################################
+
+# Read in the polarization calibration constants
+HpolCalFile = os.path.join(Hpol_calDir, 'P_inst_values.dat')
+HpolCalDict = parsePinstFile(HpolCalFile)
+KpolCalFile = os.path.join(Kpol_calDir, 'P_inst_values.dat')
+KpolCalDict = parsePinstFile(KpolCalFile)
+polCalDict  = {'H':HpolCalDict, 'Ks':KpolCalDict}
+
+# Grab the year-blocks from the Pinst files
+Hpol_yrBlockKeys = []
+Hpol_yrBlockVals = []
+for key, value in HpolCalDict.items():
+    if 'ENDYR' in key:
+        Hpol_yrBlockKeys.append(key)
+        Hpol_yrBlockVals.append(value)
+Hpol_yrBlockKeys = np.array(Hpol_yrBlockKeys)
+Hpol_yrBlockVals = np.array(Hpol_yrBlockVals)
+Hpol_yrSortInds  = Hpol_yrBlockVals.argsort()
+Hpol_yrBlockKeys = Hpol_yrBlockKeys[Hpol_yrSortInds]
+Hpol_yrBlockVals = Hpol_yrBlockVals[Hpol_yrSortInds]
+
+Kpol_yrBlockKeys = []
+Kpol_yrBlockVals = []
+for key, value in KpolCalDict.items():
+    if 'ENDYR' in key:
+        Kpol_yrBlockKeys.append(key)
+        Kpol_yrBlockVals.append(value)
+Kpol_yrBlockKeys = np.array(Kpol_yrBlockKeys)
+Kpol_yrBlockVals = np.array(Kpol_yrBlockVals)
+Kpol_yrSortInds  = Kpol_yrBlockVals.argsort()
+Kpol_yrBlockKeys = Kpol_yrBlockKeys[Kpol_yrSortInds]
+Kpol_yrBlockVals = Kpol_yrBlockVals[Kpol_yrSortInds]
+
+yrBlockDict = {
+    'H':  dict(zip(Hpol_yrBlockKeys, Hpol_yrBlockVals)),
+    'Ks': dict(zip(Kpol_yrBlockVals, Kpol_yrBlockVals))
+}
+yrBlockKeys = {
+    'H':  Hpol_yrBlockKeys,
+    'Ks': Kpol_yrBlockKeys
+}
+yrBlockVals = {
+    'H':  Hpol_yrBlockVals,
+    'Ks': Kpol_yrBlockVals
+}
 
 # Define a corresponding set of IPPA values for each polAng value
 IPPAs = [0, 45, 90, 135]
 
-# Build a list of dictionary keys for these IPPAs
+# Build a list of dictionary keys for these IPPAs. These will be useed to
+# create a StokesParameters object from which to compute polarization maps.
 IPPAkeys = ['I_' + str(IPPA) for IPPA in IPPAs]
 
-# Loop through each target
-for thisTarget in targetsToProcess:
-    # Update the user on progress
-    print('Processing files for')
-    print('Target : {}'.format(thisTarget))
+# Initalize a dictionary to store all the IPPA images for this target
 
-    ######
-    # Check if the files have already been processed.
-    ######
-    # Initalize a blank list and dict to store all the Stokes file names
+# Loop through each target-filter pairing
+for thisTarget, filters in targetFilterDict.items():
+    # Quickly loop through filters and check if this target has already been done
     stokesFileList = []
     stokesFileDict = {}
-
-    # Loop through each filter for the current target
-    for thisFilter in filtersToProcess:
+    for thisFilter in filters:
         # Construct the expected output names filenames for this
         # (target, filter) pair
         stokesIfilename = '_'.join([thisTarget, thisFilter, 'I']) + '.fits'
@@ -92,72 +169,49 @@ for thisTarget in targetsToProcess:
     # Check if all the Stokes files for this target have already been processed.
     # If they have been processed, then skip this target
     if all([os.path.isfile(f) for f in stokesFileList]):
-        print('\tFile for {0} already exists...'.format(thisTarget))
+        print('\tTraget {0} has already been processed... skipping'.format(thisTarget))
         continue
 
-    # Initalize lists and dictionaries for storing each IPPA filename and image
-    # for the current target.
-    ippaImgList = []
-    ippaImgIndexDict = {}
-    # Loop back through each filter and construct the IPPA filenames
-    for thisFilter in filtersToProcess:
-        # Construct the expected input filenames for this (target, filter) pair
-        thisFilterFilenames = [
-            os.path.join(
-                polAngDir,
-                '_'.join([thisTarget, thisFilter, str(polAng)]) + '.fits'
+    # Now that it's been confirmed that some processing remains to be done, loop
+    # back through the filters and read in all the images
+    IPPAimgList = []
+    for thisFilter in filters:
+        # Loop through each IPPA
+        for IPPA in IPPAs:
+            # Construct the expected IPPA image names for this pairing
+            thisIPPAfile = os.path.join(
+                IPPAdir,
+                '{}_{}_{}.fits'.format(thisTarget, thisFilter, str(IPPA))
             )
-            for polAng in polAngs
-        ]
 
-        # Test if all of the expected polAng images exist
-        if not all([os.path.isfile(f) for f in thisFilterFilenames]):
-            raise ValueError('Could not locate all of the expected polAng images for {0}_{1}'.format(
-                thisTarget, thisFilter
-            ))
+            # Check if that file already exists (it *REALLY* must!)
+            if not os.path.isfile(thisIPPAfile):
+                print('Could not find file {}'.format(thisIPPAfile))
+                import pdb; pdb.set_trace()
 
-        # Read in the IPPA images for this filter
-        thisFilterImgList = [ai.reduced.ReducedScience.read(f) for f in thisFilterFilenames]
+            # If the file *does* exist, then simply read it in
+            thisIPPAimg = ai.reduced.ReducedScience.read(thisIPPAfile)
 
-        ########################################################################
-        # HACK: read in a list of uncertainty arrays and store them...
-        from astropy.io import fits
-        thisFilterUncertList = [fits.open(f)[1].data for f in thisFilterFilenames]
-        thisFilterImgList1 = []
-        for img, uncert in zip(thisFilterImgList, thisFilterUncertList):
-            img.uncertainty = uncert
-            thisFilterImgList1.append(img)
-        ########################################################################
-
-        # Store the IPPA images in the ippaImgDict
-        thisFilterIndexList = [
-            ind for ind in range(
-                len(ippaImgList), len(ippaImgList) + len(thisFilterImgList),
-            )
-        ]
-
-        # Store the IPPA file names in the list
-        ippaImgList.extend(thisFilterImgList)
-
-        ippaImgIndexDict[thisFilter] = thisFilterIndexList
+            # Store this image in the IPPA image list for this filter
+            IPPAimgList.append(thisIPPAimg)
 
     # Place the images in an ImageStack for alignment
-    ippaImgStack = ai.utilitywrappers.ImageStack(copy.deepcopy(ippaImgList))
+    IPPAimgStack = ai.utilitywrappers.ImageStack(copy.deepcopy(IPPAimgList))
 
     # Allign ALL images for this stack
-    ippaImgStack.align_images_with_cross_correlation(
+    IPPAimgStack.align_images_with_cross_correlation(
         subPixel=True,
-        satLimit=22e3
+        satLimit=16e3
     )
 
     # Grab the reference "median" image
-    referenceImage = ippaImgStack.build_median_image()
+    referenceImage = IPPAimgStack.build_median_image()
 
     # Trigger a re-solving of the image astrometry. Start by clearing relevant
     # astrometric data from the header.
     referenceImage.clear_astrometry()
     tmpHeader = referenceImage.header
-    del tmpHeader['POLPOS']
+    del tmpHeader['HWP*']
     referenceImage.header = tmpHeader
 
     print('\tSolving astrometry for the reference image.')
@@ -174,50 +228,65 @@ for thisTarget in targetsToProcess:
 
     # Loop through ALL the images and assign the solved astrometry to them
     imgList = []
-    for img in ippaImgStack.imageList:
+    for img in IPPAimgStack.imageList:
         img.astrometry_to_header(referenceImage.wcs)
         imgList.append(img)
 
     # Recreate the IPPA image stack from this updated list of images
-    ippaImgStack = ai.utilitywrappers.ImageStack(imgList)
+    IPPAimgStack = ai.utilitywrappers.ImageStack(imgList)
 
     # Now look ONE-MORE-TIME through each filter and align all its images to
     # THIS REFERENCE IMAGE
-    for iFilter, thisFilter in enumerate(filtersToProcess):
+    for iFilter, thisFilter in enumerate(filters):
         print('\tFilter : {0}'.format(thisFilter))
 
-        # Store the polAngImgs in a dictonary with IPPA keys
-        polAngImgDict = dict(zip(
+        # Grab the IPPA images associated with this filter
+        # NOTE: there is a bit of guesswork here assuming that the images are in
+        # such an order that each group of 4 IPPA images is associated with a
+        # single filter. This might be resolved in the future, but it works for now.
+        IPPAimgDict = dict(zip(
             IPPAkeys,
-            ippaImgStack.imageList[iFilter*4:(iFilter+1)*4]
+            IPPAimgStack.imageList[iFilter*4:(iFilter+1)*4]
         ))
 
-        # Set the calibration constants for this waveband
-        # ########################################################################
-        # # HACK: to get through old calibration file designations
-        # polCalRowInd = np.where(polCalConstants['Waveband'] == thisFilter)
-        # polCalRow    = polCalConstants[polCalRowInd]
-        # polCalDict   = {}
-        # for key, properKey in zip(['PE', 's_PE', 'PAsign', 'dPA', 's_dPA'], ['PE', 's_PE', 'PAsign', 'D_PA', 's_D_PA']):
-        #     if key in ['dPA', 's_dPA']:
-        #         polCalDict[properKey] = float(polCalRow[key])*u.deg
-        #     else:
-        #         polCalDict[properKey] = float(polCalRow[key])
-        # ########################################################################
-        polCalRowInd = np.where(polCalConstants['FILTER'] == thisFilter)
-        polCalRow    = polCalConstants[polCalRowInd]
-        polCalDict   = {}
-        for key in ['PE', 's_PE', 'PAsign', 'D_PA', 's_D_PA']:
-            if key in ['D_PA', 's_D_PA']:
-                polCalDict[key] = float(polCalRow[key])*u.deg
-            else:
-                polCalDict[key] = float(polCalRow[key])
+        # Compute the date of observation for this image
+        thisDatetime = IPPAimgDict['I_0'].datetime
+        Yr0          = datetime(thisDatetime.year, 1, 1, 0, 0, 0)
+        secondsInYr  = 365.25*24*60*60
+        dateAfterYr0 = (thisDatetime - Yr0).total_seconds()/secondsInYr
+        thisFracYr   = thisDatetime.year + dateAfterYr0
+
+        # Find the year-block corresponding to this date
+        yrBlockInd   = np.max(np.where(yrBlockVals[thisFilter] < thisFracYr))
+        timeBlockKey = yrBlockKeys[thisFilter][yrBlockInd]
+        timeBlockNum = timeBlockKey.split('_')[-1]
+        D_PA_key     = 'P_OFF_' + timeBlockNum
+        s_D_PA_key   = 'SP_OF_' + timeBlockNum
+
+        # Grab the PA offset and uncertainty in that offset for these values
+        D_PA   = polCalDict[thisFilter][D_PA_key]*u.degree
+        s_D_PA = polCalDict[thisFilter][s_D_PA_key]*u.degree
+
+        # Grab the other calibrating constants straight from the dictionary
+        PE   = polCalDict[thisFilter]['P_EFFIC']
+        s_PE = polCalDict[thisFilter]['S_P_EFF']
+
+        # Construct the polarization calibration dictionary for these images
+        thisPolCalDict = {
+            'PE': PE,
+            's_PE': s_PE,
+            'PAsign': +1,
+            'D_PA': D_PA,
+            's_D_PA': s_D_PA
+        }
 
         # Set the polarization calibration constants for this filter
-        ai.utilitywrappers.StokesParameters.set_calibration_constants(polCalDict)
+        ai.utilitywrappers.StokesParameters.set_calibration_constants(
+            thisPolCalDict
+        )
 
-        # Construct the StokesParameters object
-        stokesParams = ai.utilitywrappers.StokesParameters(polAngImgDict)
+        # Construct the StokesParameters object for this filter
+        stokesParams = ai.utilitywrappers.StokesParameters(IPPAimgDict)
 
         # Compute the Stokes parameter images
         stokesParams.compute_stokes_parameters(resolveAstrometry=False)
