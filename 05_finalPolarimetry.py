@@ -145,7 +145,6 @@ IPPAs = [0, 45, 90, 135]
 IPPAkeys = ['I_' + str(IPPA) for IPPA in IPPAs]
 
 # Initalize a dictionary to store all the IPPA images for this target
-
 # Loop through each target-filter pairing
 for thisTarget, filters in targetFilterDict.items():
     # Quickly loop through filters and check if this target has already been done
