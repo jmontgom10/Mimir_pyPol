@@ -76,28 +76,63 @@ def find_2MASS_flux(array):
     all_labels1 = morphology.remove_small_objects(all_labels, min_size=50)
     fgdRegion   = all_labels1 > 0
 
+    # Grab the part *only* connected to the central, nebular region
+    ny, nx = fgdRegion.shape
+    all_labels   = measure.label(fgdRegion)
+    nebularLabel = all_labels[ny//2, nx//2]
+    nebularMask  = all_labels == nebularLabel
+    starMask     = np.logical_and(
+        all_labels > 0,
+        all_labels != nebularLabel
+    )
+    all_labels  = measure.label(starMask)
+    all_labels1 = morphology.remove_small_objects(all_labels, min_size=50)
+    starMask    = all_labels1 > 0
+
     # Dilate a TOOON to be conservatine...
-    sigma = 20.0 * gaussian_fwhm_to_sigma    # FWHM = 3.0
+    nebularSigma = 20.0 * gaussian_fwhm_to_sigma    # FWHM = 3.0
 
     # Build a kernel for detecting pixels above the threshold
-    kernel = Gaussian2DKernel(sigma, x_size=41, y_size=41)
-    kernel.normalize()
-    fgdRegion= convolve_fft(
-        fgdRegion.astype(float),
-        kernel.array
+    nebularKernel = Gaussian2DKernel(nebularSigma, x_size=41, y_size=41)
+    nebularKernel.normalize()
+    nebularMask = convolve_fft(
+        nebularMask.astype(float),
+        nebularKernel.array
     )
-    fgdRegion = (fgdRegion > 0.01)
+    nebularMask = (nebularMask > 0.01)
 
     # Expand a second time to be conservative
-    fgdRegion= convolve_fft(
-        fgdRegion.astype(float),
-        kernel.array
+    nebularMask = convolve_fft(
+        nebularMask.astype(float),
+        nebularKernel.array
     )
-    fgdRegion = (fgdRegion > 0.01)
+    nebularMask = (nebularMask > 0.01)
+
+    # Do a less aggressive dilation of the stellar mask
+    stellarSigma = 10.0 * gaussian_fwhm_to_sigma    # FWHM = 3.0
+
+    # Build a kernel for detecting pixels above the threshold
+    stellarKernel = Gaussian2DKernel(stellarSigma, x_size=41, y_size=41)
+    stellarKernel.normalize()
+    stellarMask = convolve_fft(
+        fgdRegion.astype(float),
+        stellarKernel.array
+    )
+    stellarMask = (stellarMask > 0.01)
+
+    # Recombine the nebular and stellar components
+    fgdRegion = np.logical_or(nebularMask, stellarMask)
 
     # Return the flux-bright pixels to the user
     return fgdRegion
+
 ################################################################################
+
+# Read in the Kokopelli Mask
+kokopelliMask = ai.reduced.ReducedScience.read('kokopelliMask.fits')
+
+# Dilate the mask in order to be more conservative.
+kokopelliMask.data = ndimage.binary_dilation(kokopelliMask.data).astype(int)
 
 # Construct the 2MASS masks and save to disk
 # Read in all the 2MASS images and store them in a dictionary for quick reference
