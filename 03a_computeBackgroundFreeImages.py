@@ -526,6 +526,10 @@ for group in fileIndexByGroup.groups:
             badPix,
             starDivots
         )
+        badPix = np.logical_or(
+            badPix,
+            kokopelliMask
+        )
         flatData[np.where(badPix)] = -1e6
 
         # Store the data in the image object
