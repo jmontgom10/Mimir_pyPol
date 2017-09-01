@@ -22,6 +22,7 @@ from astropy.stats import gaussian_fwhm_to_sigma, sigma_clipped_stats
 from astropy.modeling import models, fitting
 from photutils import detect_threshold, detect_sources
 from scipy.ndimage.filters import median_filter, gaussian_filter
+from skimage import measure, morphology
 from photutils import Background2D
 
 # Add the AstroImage class
@@ -391,10 +392,6 @@ for group in fileIndexByGroup.groups:
             # Divide the residual image by the flat field
             Aimg1 = Aimg1/thisFlat - AmodeDiff
 
-        # Perform a row-by-row flattening to make sure the background subtracted
-        # image does not have any residual row-by-row issues.
-        flattenedData = row_by_row_flatten(Aimg1.data, thisMask)
-
         ########################################################################
         # Construct a median, background-free on-target frame and fit a
         # polynomial function to that median image
@@ -483,22 +480,56 @@ for group in fileIndexByGroup.groups:
             )
 
         # Subtract the polynomial fit from the on-target frame
-        tmpData    = Aimg1.data - poly_fit(xx, yy)
+        tmpData  = Aimg1.data - poly_fit(xx, yy)
+
+        # Perform a row-by-row flattening to make sure the background subtracted
+        # image does not have any residual row-by-row issues.
+        flatData = row_by_row_flatten(tmpData, thisMask)
 
         # Redundantly force the on-target non-nebular pixels to have a median
         # flux of *zero*.
-        tmpData    = tmpData - np.median(tmpData[unmaskedInds])
+        flatData = flatData - np.median(flatData[unmaskedInds])
+
+        # look for divots from unmasked star in the off-target frames
+        # Start by smoothing the data
+        median9Data = median_filter(flatData, 9)
+
+        # Mask any clusters of more that 5 pixels less than negative 2-sigma
+        mean9, median9, stddev9 = sigma_clipped_stats(median9Data)
+        starDivots  = median9Data < -2*stddev9
+        all_labels  = measure.label(starDivots)
+        all_labels1 = morphology.remove_small_objects(all_labels, min_size=5)
+        starDivots  = all_labels1 > 0
+
+        # Remove any pixels along extreme top
+        starDivots[ny-10:ny,:] = False
+
+        # Dialate the starDivots mask
+        stellarSigma = 5.0 * gaussian_fwhm_to_sigma    # FWHM = 3.0
+
+        # Build a kernel for detecting pixels above the threshold
+        stellarKernel = Gaussian2DKernel(stellarSigma, x_size=41, y_size=41)
+        stellarKernel.normalize()
+        starDivots = convolve_fft(
+            starDivots.astype(float),
+            stellarKernel.array
+        )
+        starDivots = (starDivots > 0.01)
 
         # Capture NaNs and bad values and set them to -1e6 so that PPOL will
         # know what to do with those values.
         badPix = np.logical_or(
-            np.logical_not(np.isfinite(tmpData)),
-            np.abs(tmpData) > 1e5
+            np.logical_not(np.isfinite(flatData)),
+            np.abs(flatData) > 1e5
         )
-        tmpData[np.where(badPix)] = -1e6
+        badPix = np.logical_or(
+            badPix,
+            starDivots
+        )
+        flatData[np.where(badPix)] = -1e6
 
         # Store the data in the image object
-        Aimg1.data = tmpData
+        Aimg1.data = flatData
 
         # Estimate the amount of background light removed from this image
         subtractedBackground = BmodeAtAtime + AmodeDiff + poly_fit(0.5*nx, 0.5*ny)
