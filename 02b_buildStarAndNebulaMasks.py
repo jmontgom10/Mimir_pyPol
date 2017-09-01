@@ -56,34 +56,6 @@ indexFile = os.path.join(pyPol_data, 'reducedFileIndex.csv')
 fileIndex = Table.read(indexFile, format='csv')
 
 ################################################################################
-# Define a function to locate even dim stars in the image
-################################################################################
-from scipy.signal import medfilt
-def find_dim_stars(array):
-    # Perform a (3x3) median filter
-    medArr3 = medfilt(array, 3)
-    medArr9 = medfilt(array, 9)
-
-    # Compute array statistics
-    mean, median, stddev = sigma_clipped_stats(medArr3)
-
-    # Locate pixels with more that 3-sigma deviation from the local median
-    starPix  = (medArr3 - medArr9)/stddev > 2
-
-    # Dialate the pixel mask
-    sigma = 10.0 * gaussian_fwhm_to_sigma    # FWHM = 3.0
-
-    # Build a kernel for detecting pixels above the threshold
-    kernel = Gaussian2DKernel(sigma, x_size=21, y_size=21)
-    kernel.normalize()
-    starPix1 = convolve_fft(
-        starPix.astype(float),
-        kernel.array
-    )
-
-    return starPix1 > 0.005
-
-################################################################################
 def find_2MASS_flux(array):
     # Identify which pixels have acceptable "background" levels. Start by
     # grabbing the image statistics
