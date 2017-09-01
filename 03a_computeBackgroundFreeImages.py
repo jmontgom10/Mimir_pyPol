@@ -31,7 +31,7 @@ import astroimage as ai
 from Mimir_header_handler import Mimir_header_handler
 
 # This is the location of all PPOL reduction directory
-PPOL_dir = 'C:\\Users\\Jordan\\FITS_data\\Mimir_data\\PPOL_reduced\\201611\\notPreFlattened'
+PPOL_dir = 'C:\\Users\\Jordan\\FITS_data\\Mimir_data\\PPOL_reduced\\201611'
 
 # Build the path to the S3_Asotrometry files
 S3_dir = os.path.join(PPOL_dir, 'S3_Astrometry')
@@ -159,6 +159,30 @@ def mode(array):
 
     return flatMode
 
+# Write a quiick row-by-row flattener
+def row_by_row_flatten(array, mask):
+    """Flattens residual row-by-row variation in on-target images"""
+    # Mask the array
+    tmpArr = array.copy().astype(float)
+    tmpArr[np.where(mask)] = np.NaN
+
+    # Compute the median of the unmasked region
+    arrayMedian = np.nanmedian(tmpArr)
+
+    # Compute the median of each row
+    rowMedians  = np.nanmedian(tmpArr, axis = 1)
+
+    # Compute the difference between each row median and array median
+    medianDiffs = np.array([rowMedians - arrayMedian]).T
+
+    # Expand the row differences to match the shape of the original array
+    ny, nx    = array.shape
+    diffArray = np.tile(medianDiffs, (1, nx))
+
+    # Subtract the difference from the input array
+    outputArr = array - diffArray
+
+    return outputArr
 
 ################################################################################
 # Determine which parts of the fileIndex pertain to science images
@@ -367,6 +391,10 @@ for group in fileIndexByGroup.groups:
             # Divide the residual image by the flat field
             Aimg1 = Aimg1/thisFlat - AmodeDiff
 
+        # Perform a row-by-row flattening to make sure the background subtracted
+        # image does not have any residual row-by-row issues.
+        flattenedData = row_by_row_flatten(Aimg1.data, thisMask)
+
         ########################################################################
         # Construct a median, background-free on-target frame and fit a
         # polynomial function to that median image
@@ -440,13 +468,7 @@ for group in fileIndexByGroup.groups:
         # about the near-nebula sky variation as possible to avoid having the
         # polynomial dominate the polarization signal.
 
-        # TODO: In fact, the 2MASS mask is *overly* conservative around stars.
-        # I recommend recomputing the star component of the 2MASS mask less
-        # conservatively (but keeping the nebular part extremely conservative.)
-        # This will recover a non-trivial number of non-stellar, non-nebular sky
-        # pixels in the on-target frames.
-
-        # Model the median image with a 3rd degree polynomial
+        # Model the median image with a 3rd (or 4th?) degree polynomial
         p_init = models.Polynomial2D(degree=4)
         fit_p  = fitting.LevMarLSQFitter()
 
