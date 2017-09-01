@@ -197,8 +197,37 @@ for iRow, row in enumerate(fileIndex):
     # Attempt to recover a background estimate. If not, then just fill with -1e6
     try:
         # Locate the non-stellar pixels in this image
-        starMask = find_dim_stars(thisImg.data)
+        xs, ys = thisImg.get_sources(FWHMguess = 5.0, minimumSNR = 4.0, satLimit = 1e20)
+        photAnalyzer = ai.utilitywrappers.PhotometryAnalyzer(thisImg)
+        starFluxes, fluxUncerts = photAnalyzer.aperture_photometry(
+            xs, ys, 2.5, 24, 26, mask=(thisImg.data < -1e4)
+        )
 
+        # Catch bad stars
+        goodInds   = np.where(starFluxes > 0)
+        xs         = xs[goodInds]
+        ys         = ys[goodInds]
+        starFluxes = starFluxes[goodInds]
+        starRadii  = 5*np.log10(starFluxes)
+
+        # test = thisImg.copy()
+        # test.show()
+        # test.image.axes.autoscale(False)
+        # test.image.axes.scatter(xs, ys, facecolor='none', edgecolor='r')
+        # test.image.figure.canvas.draw()
+
+        # Loop through each star and make its mask
+        ny, nx   = thisImg.shape
+        yy, xx   = np.mgrid[0:ny, 0:nx]
+        starMask = False
+        for xs1, ys1, rs in zip(xs, ys, starRadii):
+            if not np.isfinite(rs): import pdb;
+            # Compute the distances from this star
+            # Mask any pixels within 1 radius of this star
+            starMask = np.logical_or(
+                starMask,
+                np.sqrt((xx - xs1)**2 + (yy - ys1)**2) < rs
+            )
         # Write the mask to disk
         maskImg = ai.reduced.ReducedScience(starMask.astype(int))
         maskImg.write(maskFullname, dtype=np.uint8)
