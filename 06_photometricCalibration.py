@@ -45,7 +45,6 @@ targetFilterDict = {
 # Initalize a dictionary to store all the IPPA images for this target
 # Loop through each target-filter pairing
 for thisTarget, filters in targetFilterDict.items():
-    if thisTarget != 'NGC7023': continue
     # Quickly loop through filters and check if this target has already been done
     stokesIdict = {}
     for thisFilter in filters:
@@ -67,19 +66,15 @@ for thisTarget, filters in targetFilterDict.items():
     # Run the calibraion method
     calImgDict = photCalibrator.calibrate_photometry()
 
+    # Write the calibrated images to disk
+    for key, img in calImgDict.items():
+        # Determine if this is an intensity image
+        keyParts = key.split('_')
+        if len(keyParts) > 1:
+            filename  = os.path.join(stokesDir, '_'.join([thisTarget, keyParts[0], 'I', 'cal']) + '.fits')
+        else:
+            filename  = os.path.join(stokesDir, '_'.join([thisTarget, key, 'cal']) + '.fits')
 
-
-    # Compare to single band calibration
-    stokesHdict = {'H':stokesIdict['H']}
-    stokesKdict = {'Ks':stokesIdict['Ks']}
-    photCalibrator_H = ai.utilitywrappers.PhotometryCalibrator(
-        stokesHdict
-    )
-    photCalibrator_K = ai.utilitywrappers.PhotometryCalibrator(
-        stokesKdict
-    )
-
-    calH_img = photCalibrator_H.calibrate_photometry()
-    calK_img = photCalibrator_K.calibrate_photometry()
+        img.write(filename, clobber=True)
 
 print('Done!')
