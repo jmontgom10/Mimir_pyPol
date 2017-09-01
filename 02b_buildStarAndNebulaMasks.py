@@ -2,6 +2,7 @@ import os
 import glob
 import numpy as np
 from skimage import measure, morphology
+from scipy import ndimage
 from astropy.table import Table, Column
 from astropy.stats import gaussian_fwhm_to_sigma, sigma_clipped_stats
 from astropy.convolution import convolve, convolve_fft, Gaussian2DKernel
@@ -204,25 +205,44 @@ for iRow, row in enumerate(fileIndex):
     # Attempt to recover a background estimate. If not, then just fill with -1e6
     try:
         # Locate the non-stellar pixels in this image
-        xs, ys = thisImg.get_sources(FWHMguess = 5.0, minimumSNR = 4.0, satLimit = 1e20)
         photAnalyzer = ai.utilitywrappers.PhotometryAnalyzer(thisImg)
+        try:
+            _, psfParams = photAnalyzer.get_psf()
+            fwhm = 2.355*np.sqrt(psfParams['sminor']*psfParams['smajor'])
+        except:
+            fwhm = 4.5
+
+        xs, ys = thisImg.get_sources(FWHMguess = fwhm, minimumSNR = 4.0, satLimit = 1e20)
         starFluxes, fluxUncerts = photAnalyzer.aperture_photometry(
             xs, ys, 2.5, 24, 26, mask=(thisImg.data < -1e4)
         )
 
+        # import matplotlib.pyplot as plt
+        # plt.ion()
+        # plt.figure()
+        # plt.imshow(kokopelliMask.data, origin='lower', interpolation='nearest')
+        # plt.autoscale(False)
+        # plt.scatter(xs, ys, facecolor='none', edgecolor='w')
+
         # Catch bad stars
-        goodInds   = np.where(starFluxes > 0)
+        inKokopelli = kokopelliMask.data[ys.round().astype(int), xs.round().astype(int)]
+        goodInds    = np.where(
+            np.logical_and(
+                starFluxes > 0,
+                np.logical_not(inKokopelli)
+            )
+        )
         xs         = xs[goodInds]
         ys         = ys[goodInds]
         starFluxes = starFluxes[goodInds]
         starRadii  = 5*np.log10(starFluxes)
 
-        # test = thisImg.copy()
-        # test.show()
-        # test.image.axes.autoscale(False)
-        # test.image.axes.scatter(xs, ys, facecolor='none', edgecolor='r')
-        # test.image.figure.canvas.draw()
-
+        # thisImg.show()
+        # thisImg.image.axes.autoscale(False)
+        # thisImg.image.axes.scatter(xs,ys, facecolor='none', edgecolor='white')
+        # import pdb; pdb.set_trace()
+        # plt.close('all')
+        #
         # Loop through each star and make its mask
         ny, nx   = thisImg.shape
         yy, xx   = np.mgrid[0:ny, 0:nx]
