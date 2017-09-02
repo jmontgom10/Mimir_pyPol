@@ -177,33 +177,57 @@ for img in TMASS_KimgList:
 ai.set_instrument('Mimir')
 ai.reduced.ReducedScience.set_header_handler(Mimir_header_handler)
 
+# Group by target HWP
+groupedFileIndex = fileIndex.group_by(['GROUP_ID', 'HWP'])
+
 #Loop through each file in the fileList variable
 numberOfFiles = len(fileIndex)
 bkgLevels = fileIndex['BACKGROUND']
 print('{0:3.1%} complete'.format(0), end='\r')
-for iRow, row in enumerate(fileIndex):
-    # Grab the relevant information for this file
-    thisTarget     = row['TARGET']
-    thisFilter     = row['FILTER']
-    thisDitherType = row['DITHER_TYPE']
-    thisAB         = row['AB']
 
-    # If this is an on-target (A) frame, then skip it!
-    if thisAB == 'A': continue
+iRow = 0
+for group in groupedFileIndex.groups:
+    # Increment the row counter
+    iRow += len(group)
 
-    # Construct the path to the PPOL S3_Astrometry file
-    thisFile = os.path.join(S3_dir, row['FILENAME'])
+    # Grab the relevant information for this group
+    thisTarget     = np.unique(group['TARGET'])[0]
+    thisFilter     = np.unique(group['FILTER'])[0]
 
-    # Check if the file has already been written and skip those which have been
-    maskBasename = os.path.basename(thisFile)
-    maskFullname = os.path.join(starMaskDir, maskBasename)
-    if os.path.isfile(maskFullname): continue
+    # Re-group by dither pointing
+    ABBAsubGroups = group.group_by(['AB'])
 
-    # Read in this image
-    thisImg = ai.reduced.ReducedScience.read(thisFile)
+    for ABBAgroup in ABBAsubGroups.groups:
+        # Grab the relevant information for this subgroup
+        thisAB = np.unique(ABBAgroup['AB'])[0]
 
-    # Attempt to recover a background estimate. If not, then just fill with -1e6
-    try:
+        # If this is an on-target (A) subgroup, then skip it!
+        if thisAB == 'A': continue
+
+        # Grab the off-target files
+        Bfiles = []
+        maskFilenames = []
+        for thisFile in ABBAgroup['FILENAME']:
+            # Append the B-file to use
+            Bfiles.append(os.path.join(S3_dir, thisFile))
+
+            # BUild the mask name
+            maskBasename = os.path.basename(thisFile)
+            maskFilenames.append(os.path.join(starMaskDir, maskBasename))
+
+        # Check if the file has already been written and skip those which have been
+        if np.all([os.path.isfile(f) for f in maskFilenames]): continue
+
+
+    # Loop through each file and build the preliminary mask
+    Bimgs = []
+    starMasks = []
+    for Bfile in Bfiles:
+        # Read in the image and store it for possible later use
+        thisImg = ai.reduced.ReducedScience.read(Bfile)
+        Bimgs.append(thisImg)
+
+        # Attempt to recover a background estimate. If not, then just fill with -1e6
         # Locate the non-stellar pixels in this image
         photAnalyzer = ai.utilitywrappers.PhotometryAnalyzer(thisImg)
         try:
@@ -216,13 +240,6 @@ for iRow, row in enumerate(fileIndex):
         starFluxes, fluxUncerts = photAnalyzer.aperture_photometry(
             xs, ys, 2.5, 24, 26, mask=(thisImg.data < -1e4)
         )
-
-        # import matplotlib.pyplot as plt
-        # plt.ion()
-        # plt.figure()
-        # plt.imshow(kokopelliMask.data, origin='lower', interpolation='nearest')
-        # plt.autoscale(False)
-        # plt.scatter(xs, ys, facecolor='none', edgecolor='w')
 
         # Catch bad stars
         inKokopelli = kokopelliMask.data[ys.round().astype(int), xs.round().astype(int)]
@@ -237,12 +254,6 @@ for iRow, row in enumerate(fileIndex):
         starFluxes = starFluxes[goodInds]
         starRadii  = 5*np.log10(starFluxes)
 
-        # thisImg.show()
-        # thisImg.image.axes.autoscale(False)
-        # thisImg.image.axes.scatter(xs,ys, facecolor='none', edgecolor='white')
-        # import pdb; pdb.set_trace()
-        # plt.close('all')
-        #
         # Loop through each star and make its mask
         ny, nx   = thisImg.shape
         yy, xx   = np.mgrid[0:ny, 0:nx]
@@ -255,12 +266,124 @@ for iRow, row in enumerate(fileIndex):
                 starMask,
                 np.sqrt((xx - xs1)**2 + (yy - ys1)**2) < rs
             )
-        # Write the mask to disk
-        maskImg = ai.reduced.ReducedScience(starMask.astype(int))
-        maskImg.write(maskFullname, dtype=np.uint8)
 
-    except:
-        print('Failed to save file {}'.format(maskFullname))
+        # Store the mask for later use
+        starMasks.append(starMask)
+
+    # If more than one image exists in this group, then do a secondary pass to
+    # locate the dimmer stars
+    numBimgs = len(Bimgs)
+    if numBimgs > 1:
+        # Loop through each
+        for iImg in range(numBimgs):
+            # Determine which image is the primary image and which is secondary
+            if iImg == 0:
+                thisImg  = Bimgs[0]
+                otherImg = Bimgs[1]
+            elif iImg == 1:
+                thisImg  = Bimgs[1]
+                otherImg = Bimgs[0]
+            else:
+                print('What?! How did you even get here?!')
+                import pdb; pdb.set_trace()
+
+            # Grab the corresponding mask
+            thisMask = starMasks[iImg]
+
+            # Subtract the two images from eachother
+            diffData = otherImg.data - thisImg.data
+
+            # LOOK FOR DIVOTS IN DIFFERENCE BETWEEN MEDIAN FILTERED IMAGES
+            # Start by smoothing the data
+            median9Data  = ndimage.median_filter(diffData, 9)
+
+            # LOOK FOR DIVOTS IN GENERAL MEDIAN FILTERED IMAGE
+            # Locate pixels less than negative 2-sigma
+            mean9, median9, stddev9 = sigma_clipped_stats(median9Data)
+            starDivots = np.nan_to_num(median9Data) < (mean9 -4*stddev9)
+
+            # Remove anything that is smaller than 20 pixels
+            all_labels  = measure.label(starDivots)
+            all_labels1 = morphology.remove_small_objects(all_labels, min_size=20)
+            label_hist, label_bins = np.histogram(
+                all_labels1,
+                bins=np.arange(all_labels1.max() - all_labels1.min())
+            )
+            label_mode  = label_bins[label_hist.argmax()]
+            starDivots = all_labels1 != label_mode
+
+            # Remove any pixels along extreme top
+            starDivots[ny-10:ny,:] = False
+
+            # Dialate the starDivots mask
+            stellarSigma = 5.0 * gaussian_fwhm_to_sigma    # FWHM = 3.0
+
+            # Build a kernel for detecting pixels above the threshold
+            stellarKernel = Gaussian2DKernel(stellarSigma, x_size=41, y_size=41)
+            stellarKernel.normalize()
+            starDivots = convolve_fft(
+                starDivots.astype(float),
+                stellarKernel.array
+            )
+            starDivots = (starDivots > 0.01)
+
+            # Compbine the divots mask and the original mask
+            fullMask = np.logical_or(thisMask, starDivots)
+
+            # Store the mask back in its list
+            starMasks[iImg] = ai.reduced.ReducedScience(fullMask.astype(int))
+
+    # Do a finel loop-through to make sure there is as much agreement between
+    # the two masks as possible
+    if numBimgs > 1:
+        # Construct an image stack and compute image offsets
+        BimgStack = ai.utilitywrappers.ImageStack(Bimgs)
+        dx, dy = BimgStack.get_wcs_offsets(BimgStack)
+
+        try:
+            starMask0 = starMasks[0].copy()
+            starMask1 = starMasks[1].copy()
+        except:
+            print('Why are there not 2 starMasks?')
+            import pdb; pdb.set_trace()
+
+        for iMask in range(numBimgs):
+            # Determine which image is the primary image and which is secondary
+            if iMask == 0:
+                dx1 = dx[1] - dx[0]
+                dy1 = dy[1] - dy[0]
+                thisMask  = starMask0
+                otherMask = starMask1
+            elif iMask == 1:
+                dx1 = dx[0] - dx[1]
+                dy1 = dy[0] - dy[1]
+                thisMask  = starMask1
+                otherMask = starMask0
+            else:
+                print('What?! How did you even get here?!')
+                import pdb; pdb.set_trace()
+
+            # Shift the mask accordingly
+            shiftedOtherMask = otherMask.shift(dx1, dy1)
+
+            # Combine this mask and the shifted mask
+            fullMask = np.logical_or(
+                thisMask.data,
+                shiftedOtherMask.data
+            )
+
+            # Store the mask for a final write-to-disk
+            starMasks[iMask] = fullMask
+
+    # Look through the masks and write to disk
+    for maskFile, starMask in zip(maskFilenames, starMasks):
+        try:
+            # Write the mask to disk
+            maskImg = ai.reduced.ReducedScience(starMask.astype(int))
+            maskImg.write(maskFile, dtype=np.uint8)
+
+        except:
+            print('Failed to save file {}'.format(maskFile))
 
     # Update on progress
     print('{0:3.1%} complete'.format(iRow/numberOfFiles), end='\r')

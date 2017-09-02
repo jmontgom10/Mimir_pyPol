@@ -490,42 +490,13 @@ for group in fileIndexByGroup.groups:
         # flux of *zero*.
         flatData = flatData - np.median(flatData[unmaskedInds])
 
-        # look for divots from unmasked star in the off-target frames
-        # Start by smoothing the data
-        median9Data = median_filter(flatData, 9)
-
-        # Mask any clusters of more that 5 pixels less than negative 2-sigma
-        mean9, median9, stddev9 = sigma_clipped_stats(median9Data)
-        starDivots  = median9Data < -2*stddev9
-        all_labels  = measure.label(starDivots)
-        all_labels1 = morphology.remove_small_objects(all_labels, min_size=5)
-        starDivots  = all_labels1 > 0
-
-        # Remove any pixels along extreme top
-        starDivots[ny-10:ny,:] = False
-
-        # Dialate the starDivots mask
-        stellarSigma = 5.0 * gaussian_fwhm_to_sigma    # FWHM = 3.0
-
-        # Build a kernel for detecting pixels above the threshold
-        stellarKernel = Gaussian2DKernel(stellarSigma, x_size=41, y_size=41)
-        stellarKernel.normalize()
-        starDivots = convolve_fft(
-            starDivots.astype(float),
-            stellarKernel.array
-        )
-        starDivots = (starDivots > 0.01)
-
         # Capture NaNs and bad values and set them to -1e6 so that PPOL will
         # know what to do with those values.
         badPix = np.logical_or(
             np.logical_not(np.isfinite(flatData)),
             np.abs(flatData) > 1e5
         )
-        badPix = np.logical_or(
-            badPix,
-            starDivots
-        )
+
         badPix = np.logical_or(
             badPix,
             kokopelliMask
