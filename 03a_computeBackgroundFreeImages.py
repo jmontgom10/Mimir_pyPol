@@ -22,7 +22,6 @@ from astropy.stats import gaussian_fwhm_to_sigma, sigma_clipped_stats
 from astropy.modeling import models, fitting
 from photutils import detect_threshold, detect_sources
 from scipy.ndimage.filters import median_filter, gaussian_filter
-from skimage import measure, morphology
 from photutils import Background2D
 
 # Add the AstroImage class
@@ -323,7 +322,7 @@ for group in fileIndexByGroup.groups:
 
         # Check if this file already exists
         if os.path.isfile(outFile):
-            print('File {} already exists... skipping to next group'.format(os.path.basename(outFile)))
+            print('File {} already exists... skipping to next'.format(os.path.basename(outFile)))
             continue
 
         # Read in this Aimg
