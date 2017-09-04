@@ -16,7 +16,6 @@ import numpy as np
 # Astropy imports
 from astropy.table import Table
 import astropy.units as u
-from astropy.stats import sigma_clipped_stats
 
 # Import astroimage
 import astroimage as ai
