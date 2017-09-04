@@ -52,7 +52,7 @@ airmassKeyword = ai.reduced.ReducedScience.headerKeywordDict['AIRMASS']
 #==============================================================================
 
 # This is where the associated PPOL directory is located
-PPOL_dir = 'C:\\Users\\Jordan\\FITS_data\\Mimir_data\\PPOL_Reduced\\201611\\notPreFlattened'
+PPOL_dir = 'C:\\Users\\Jordan\\FITS_data\\Mimir_data\\PPOL_Reduced\\201611'
 
 # The user must specify the *name* of the PPOL meta-groups associated with each
 # target-filter combination. This will allow the script to locate the computed
