@@ -44,7 +44,6 @@ ai.set_instrument('mimir')
 # Grad the assigned keyword for the airmass value
 airmassKeyword = ai.reduced.ReducedScience.headerKeywordDict['AIRMASS']
 
-
 #==============================================================================
 # *********************** CUSTOM USER CODE ************************************
 # this is where the user specifies where the raw data is stored
